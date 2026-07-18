@@ -16,7 +16,7 @@ Valor 是一个**本地可自托管**的个人专业理财助理，以 Web 应�
 
 ```
 valor/
-├── frontend/              # React + Vite + TypeScript（迁自 valuecell）
+├── frontend/              # React + Vite + TypeScript
 │   ├── src/
 │   │   ├── app/           # 页面路由（home, market, agent, setting, **analysis**, portfolio）
 │   │   ├── api/           # 后端 API 调用封装（含 useStreamAnalysis SSE）

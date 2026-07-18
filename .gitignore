@@ -24,6 +24,7 @@ htmlcov/
 *.db
 *.log
 data/
+docs/
 
 # Node (root-level)
 node_modules/
