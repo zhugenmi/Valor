@@ -1,0 +1,232 @@
+import math
+
+from langchain_core.messages import HumanMessage
+
+from valor.agents.state import AgentState, show_agent_reasoning, show_workflow_status
+from valor.tools.api import prices_to_df
+from valor.utils.api_utils import agent_endpoint
+from valor.utils.logging_config import setup_logger
+
+import json
+import ast
+
+##### Risk Management Agent #####
+logger = setup_logger("risk_management_agent")
+
+
+@agent_endpoint("risk_management", "风险管理专家，评估投资风险并给出风险调整后的交易建议")
+def risk_management_agent(state: AgentState):
+    """Responsible for risk management"""
+    show_workflow_status("Risk Manager")
+    show_reasoning = state["metadata"]["show_reasoning"]
+    data = state["data"]
+    logger.info("🛡️ Risk Manager start for %s", data.get("ticker", "unknown"))
+    portfolio = data["portfolio"]
+
+    prices_df = prices_to_df(data["prices"])
+    if prices_df.empty:
+        logger.warning("⚠️ Price series为空，风险指标将退化为默认值")
+
+    # Fetch debate room message instead of individual analyst messages
+    try:
+        debate_message = next(
+            msg for msg in state["messages"] if msg.name == "bull_bear_debate_agent")
+    except StopIteration:
+        logger.error("❌ 找不到 bull_bear_debate_agent 的结果，使用中性假设")
+        debate_message = HumanMessage(
+            content=json.dumps({
+                "signal": "neutral",
+                "confidence": 0.0,
+                "bull_confidence": 0.0,
+                "bear_confidence": 0.0,
+            }),
+            name="bull_bear_debate_agent",
+        )
+
+    try:
+        debate_results = json.loads(debate_message.content)
+    except Exception:
+        debate_results = ast.literal_eval(debate_message.content)
+
+    # 1. Calculate Risk Metrics
+    returns = prices_df['close'].pct_change().dropna()
+    daily_vol = returns.std()
+    # Annualized volatility approximation
+    volatility = daily_vol * (252 ** 0.5)
+
+    # 计算波动率的历史分布
+    rolling_std = returns.rolling(window=120).std() * (252 ** 0.5)
+    volatility_mean = rolling_std.mean()
+    volatility_std = rolling_std.std()
+    volatility_percentile = (volatility - volatility_mean) / volatility_std
+
+    # Simple historical VaR at 95% confidence
+    var_95 = returns.quantile(0.05)
+    # 使用60天窗口计算最大回撤
+    max_drawdown = (
+        prices_df['close'] / prices_df['close'].rolling(window=60).max() - 1).min()
+
+    logger.info(
+        "📈 波动率=%.2f%%, VaR95=%.2f%%, MaxDD=%.2f%% (样本=%d)",
+        volatility * 100,
+        var_95 * 100,
+        max_drawdown * 100,
+        len(returns),
+    )
+
+    # 2. Market Risk Assessment
+    market_risk_score = 0
+
+    # Volatility scoring based on percentile
+    if volatility_percentile > 1.5:     # 高于1.5个标准差
+        market_risk_score += 2
+    elif volatility_percentile > 1.0:   # 高于1个标准差
+        market_risk_score += 1
+
+    # VaR scoring
+    # Note: var_95 is typically negative. The more negative, the worse.
+    if var_95 < -0.03:
+        market_risk_score += 2
+    elif var_95 < -0.02:
+        market_risk_score += 1
+
+    # Max Drawdown scoring
+    if max_drawdown < -0.20:  # Severe drawdown
+        market_risk_score += 2
+    elif max_drawdown < -0.10:
+        market_risk_score += 1
+    # 3. Position Size Limits
+    # Consider total portfolio value, not just cash
+    current_stock_value = portfolio['stock'] * prices_df['close'].iloc[-1]
+    total_portfolio_value = portfolio['cash'] + current_stock_value
+
+    # Start with 100% max position of total portfolio (allow full investment)
+    base_position_size = total_portfolio_value * 1.0
+
+    if market_risk_score >= 4:
+        # Reduce position for high risk
+        max_position_size = base_position_size * 0.5
+    elif market_risk_score >= 2:
+        # Slightly reduce for moderate risk
+        max_position_size = base_position_size * 0.75
+    else:
+        # Keep base size for low risk
+        max_position_size = base_position_size
+
+    # 4. Stress Testing
+    stress_test_scenarios = {
+        "market_crash": -0.20,
+        "moderate_decline": -0.10,
+        "slight_decline": -0.05
+    }
+
+    stress_test_results = {}
+    current_position_value = current_stock_value
+
+    for scenario, decline in stress_test_scenarios.items():
+        potential_loss = current_position_value * decline
+        portfolio_impact = potential_loss / (portfolio['cash'] + current_position_value) if (
+            portfolio['cash'] + current_position_value) != 0 else math.nan
+        stress_test_results[scenario] = {
+            "potential_loss": potential_loss,
+            "portfolio_impact": portfolio_impact
+        }
+
+    # 5. Risk-Adjusted Signal Analysis
+    # Consider debate room confidence levels
+    bull_confidence = debate_results["bull_confidence"]
+    bear_confidence = debate_results["bear_confidence"]
+    debate_confidence = debate_results["confidence"]
+    debate_signal = debate_results["signal"]
+    logger.info(
+        "🧮 Debate输入: signal=%s bull=%.2f bear=%.2f confidence=%.2f",
+        debate_signal,
+        bull_confidence,
+        bear_confidence,
+        debate_confidence,
+    )
+
+    # Add to risk score if confidence is low or debate was close
+    confidence_diff = abs(bull_confidence - bear_confidence)
+    if confidence_diff < 0.1:  # Close debate
+        market_risk_score += 1
+    if debate_confidence < 0.3:  # Low overall confidence
+        market_risk_score += 1
+
+    # Cap risk score at 10
+    risk_score = min(round(market_risk_score), 10)
+
+    # 6. Generate Trading Action
+    # Consider debate room signal along with risk assessment
+    if risk_score >= 9:
+        trading_action = "hold"
+    elif risk_score >= 7:
+        trading_action = "reduce"
+    else:
+        if debate_signal == "bullish" and debate_confidence > 0.5:
+            trading_action = "buy"
+        elif debate_signal == "bearish" and debate_confidence > 0.5:
+            trading_action = "sell"
+        else:
+            trading_action = "hold"
+
+    logger.info(
+        "📊 风险评分=%d (市场=%d) -> 建议=%s, 最大仓位=%.2f",
+        risk_score,
+        market_risk_score,
+        trading_action,
+        float(max_position_size),
+    )
+
+    action_zh = {
+        "buy": "买入", "sell": "卖出", "reduce": "减仓", "hold": "持有",
+    }.get(trading_action, trading_action)
+
+    message_content = {
+        "max_position_size": float(max_position_size),
+        "risk_score": risk_score,
+        "trading_action": trading_action,
+        "risk_metrics": {
+            "volatility": float(volatility),
+            "value_at_risk_95": float(var_95),
+            "max_drawdown": float(max_drawdown),
+            "market_risk_score": market_risk_score,
+            "stress_test_results": stress_test_results
+        },
+        "debate_analysis": {
+            "bull_confidence": bull_confidence,
+            "bear_confidence": bear_confidence,
+            "debate_confidence": debate_confidence,
+            "debate_signal": debate_signal
+        },
+        "reasoning": (
+            f"综合风险评分 {risk_score}/10（市场风险子项 {market_risk_score}）。"
+            f"年化波动率 {volatility:.2%}，VaR(95%) {var_95:.2%}，"
+            f"60 日最大回撤 {max_drawdown:.2%}。"
+            f"多空辩论信号为「{debate_signal}」，多头置信 {bull_confidence:.0%} / "
+            f"空头置信 {bear_confidence:.0%} / 综合 {debate_confidence:.0%}。"
+            f"基于以上风险评估，建议操作：{action_zh}，最大允许仓位 "
+            f"¥{max_position_size:,.0f}。"
+        ),
+    }
+
+    # Create the risk management message
+    message = HumanMessage(
+        content=json.dumps(message_content),
+        name="risk_management_agent",
+    )
+
+    if show_reasoning:
+        show_agent_reasoning(message_content, "Risk Management Agent")
+        # 保存推理信息到metadata供API使用
+        state["metadata"]["agent_reasoning"] = message_content
+
+    show_workflow_status("Risk Manager", "completed")
+    return {
+        "messages": state["messages"] + [message],
+        "data": {
+            **data,
+            "risk_analysis": message_content
+        },
+        "metadata": state["metadata"],
+    }

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none">
+  <!-- Chat bubble outline with a small tail -->
+  <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8A2.5 2.5 0 0 1 17.5 17H10l-3.5 2.8a.4.4 0 0 1-.64-.36L7 16.4A2.5 2.5 0 0 1 4 14.5v-8Z"
+        stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+  <!-- Filled plus sign inside the bubble (sits visually forward) -->
+  <path d="M12 7.75a.5.5 0 0 1 .5.5v3.25h3.25a.5.5 0 0 1 0 1H12.5v3.25a.5.5 0 0 1-1 0V12.5H8.25a.5.5 0 0 1 0-1H11.5V8.25a.5.5 0 0 1 .5-.5Z"
+        fill="currentColor"/>
+</svg>
