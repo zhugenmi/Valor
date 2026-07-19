@@ -1,14 +1,17 @@
 import { create } from "zustand";
 import { type CreatePortfolioInput, portfolioApi } from "@/api/portfolio";
-import type { Portfolio, PortfolioSummary } from "./types";
+import type { Portfolio, PortfolioAnalytics, PortfolioSummary } from "./types";
 
 interface PortfolioState {
   list: PortfolioSummary[];
   current: Portfolio | null;
+  analytics: PortfolioAnalytics | null;
+  analyticsLoading: boolean;
   loading: boolean;
   error: string | null;
   fetchList: () => Promise<void>;
   fetchDetail: (id: string) => Promise<void>;
+  fetchAnalytics: (id: string) => Promise<void>;
   create: (input: CreatePortfolioInput) => Promise<string>;
   remove: (id: string) => Promise<void>;
   clearError: () => void;
@@ -17,6 +20,8 @@ interface PortfolioState {
 export const usePortfolioStore = create<PortfolioState>((set) => ({
   list: [],
   current: null,
+  analytics: null,
+  analyticsLoading: false,
   loading: false,
   error: null,
   fetchList: async () => {
@@ -31,10 +36,22 @@ export const usePortfolioStore = create<PortfolioState>((set) => ({
   fetchDetail: async (id) => {
     set({ loading: true, error: null });
     try {
-      const p = await portfolioApi.get(id);
-      set({ current: p, loading: false });
+      const [p, a] = await Promise.all([
+        portfolioApi.get(id),
+        portfolioApi.analytics(id).catch(() => null),
+      ]);
+      set({ current: p, analytics: a, loading: false });
     } catch (e) {
       set({ error: (e as Error).message, loading: false });
+    }
+  },
+  fetchAnalytics: async (id) => {
+    set({ analyticsLoading: true });
+    try {
+      const a = await portfolioApi.analytics(id);
+      set({ analytics: a, analyticsLoading: false });
+    } catch (e) {
+      set({ analyticsLoading: false, error: (e as Error).message });
     }
   },
   create: async (input) => {
