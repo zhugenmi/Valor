@@ -1,19 +1,19 @@
-import { useState, useEffect } from "react";
 import { Play } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useEffect, useState } from "react";
 import { useStreamAnalysis } from "@/api/analysis";
-import {
-  AGENT_ORDER,
-  SUB_AGENT_KEYS,
-  type AgentState,
-  type Decision,
-} from "./constants";
-import AgentCard from "./AgentCard";
-import DecisionPanel from "./DecisionPanel";
+import { Button } from "@/components/ui/button";
 import AdvancedParams, {
   type AdvancedParamsValue,
   defaultAnalysisDates,
 } from "./AdvancedParams";
+import AgentCard from "./AgentCard";
+import {
+  AGENT_ORDER,
+  type AgentState,
+  type Decision,
+  SUB_AGENT_KEYS,
+} from "./constants";
+import DecisionPanel from "./DecisionPanel";
 import ProgressBar from "./ProgressBar";
 
 function initPendingAgents(): Record<string, AgentState> {
@@ -29,9 +29,7 @@ function initPendingAgents(): Record<string, AgentState> {
  * Returns the first agent that is pending OR running (running covers
  * bull_bear_debate while its sub-stages are still streaming in).
  */
-function calcCurrentAgent(
-  agents: Record<string, AgentState>,
-): string | null {
+function calcCurrentAgent(agents: Record<string, AgentState>): string | null {
   for (const name of AGENT_ORDER) {
     const s = agents[name];
     if (!s || s.status === "pending") return name;
@@ -68,7 +66,10 @@ export default function AnalysisPage() {
         const parent = data.agent.slice(0, dotIdx);
         const sub = data.agent.slice(dotIdx + 1);
         setAgents((prev) => {
-          const current = prev[parent] ?? { status: "running" as const, output: null };
+          const current = prev[parent] ?? {
+            status: "running" as const,
+            output: null,
+          };
           const subStates = { ...(current.subStates ?? {}), [sub]: data.state };
           const allSubs = SUB_AGENT_KEYS[parent] ?? [];
           const allDone = allSubs.every((k) => k in subStates);

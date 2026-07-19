@@ -7,5 +7,3 @@ export const createAiModelSchema = (t: TFunction) =>
     model_id: z.string().min(1, t("validation.aiModel.modelIdRequired")),
     api_key: z.string().min(1, t("validation.aiModel.apiKeyRequired")),
   });
-
-

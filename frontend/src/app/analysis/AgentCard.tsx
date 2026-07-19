@@ -1,8 +1,20 @@
+import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Circle,
+  Loader2,
+  XCircle,
+} from "lucide-react";
 import { useState } from "react";
-import { ChevronDown, ChevronRight, CheckCircle2, Loader2, Circle, XCircle } from "lucide-react";
-import { AGENT_LABEL_ZH, SUB_AGENT_KEYS, SUB_AGENT_LABEL_ZH, type AgentState } from "./constants";
-import { extractAnalysisResult } from "./analysisExtractor";
 import AgentResultDisplay from "./AgentResultDisplay";
+import { extractAnalysisResult } from "./analysisExtractor";
+import {
+  AGENT_LABEL_ZH,
+  type AgentState,
+  SUB_AGENT_KEYS,
+  SUB_AGENT_LABEL_ZH,
+} from "./constants";
 
 interface AgentCardProps {
   name: string;
@@ -38,31 +50,44 @@ function StatusIcon({ status }: { status: AgentState["status"] | undefined }) {
 function SubStateRow({ subKey, data }: { subKey: string; data: unknown }) {
   const fullKey = `bull_bear_debate.${subKey}`;
   const label = SUB_AGENT_LABEL_ZH[fullKey] ?? subKey;
-  const result = extractAnalysisResult("bull_bear_debate", data as Record<string, unknown>);
+  const result = extractAnalysisResult(
+    "bull_bear_debate",
+    data as Record<string, unknown>,
+  );
   const [subExpanded, setSubExpanded] = useState(false);
   const [subShowRaw, setSubShowRaw] = useState(false);
 
   return (
-    <div className="ml-4 mt-1 border-l-2 border-muted pl-2">
+    <div className="mt-1 ml-4 border-muted border-l-2 pl-2">
       <button
         type="button"
         onClick={() => setSubExpanded(!subExpanded)}
-        className="flex w-full items-center gap-1 text-sm text-left"
+        className="flex w-full items-center gap-1 text-left text-sm"
       >
         <CheckCircle2 className="size-3 shrink-0 text-green-500" />
         <span className="font-medium">{label}</span>
         {result?.signal && (
-          <span className={`ml-1 text-xs ${
-            result.signal === "bullish" ? "text-red-500" :
-            result.signal === "bearish" ? "text-green-500" :
-            "text-muted-foreground"
-          }`}>
-            [{result.signal === "bullish" ? "看涨" : result.signal === "bearish" ? "看跌" : "中性"}]
+          <span
+            className={`ml-1 text-xs ${
+              result.signal === "bullish"
+                ? "text-red-500"
+                : result.signal === "bearish"
+                  ? "text-green-500"
+                  : "text-muted-foreground"
+            }`}
+          >
+            [
+            {result.signal === "bullish"
+              ? "看涨"
+              : result.signal === "bearish"
+                ? "看跌"
+                : "中性"}
+            ]
           </span>
         )}
       </button>
       {subExpanded && (
-        <div className="mt-1 overflow-y-auto max-h-[40vh]">
+        <div className="mt-1 max-h-[40vh] overflow-y-auto">
           {result ? (
             <AgentResultDisplay
               result={result}
@@ -72,7 +97,7 @@ function SubStateRow({ subKey, data }: { subKey: string; data: unknown }) {
               rawData={data}
             />
           ) : (
-            <pre className="rounded bg-muted p-2 text-xs overflow-x-auto whitespace-pre-wrap">
+            <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-muted p-2 text-xs">
               {typeof data === "string" ? data : JSON.stringify(data, null, 2)}
             </pre>
           )}
@@ -88,20 +113,22 @@ export default function AgentCard({ name, state, isActive }: AgentCardProps) {
   const label = AGENT_LABEL_ZH[name] ?? name;
   const status = state?.status ?? "pending";
   const subKeys = SUB_AGENT_KEYS[name];
-  const hasSubStates = subKeys && state?.subStates && Object.keys(state.subStates).length > 0;
+  const hasSubStates =
+    subKeys && state?.subStates && Object.keys(state.subStates).length > 0;
 
-  const analysisResult = state?.output != null && !hasSubStates
-    ? extractAnalysisResult(name, state.output as Record<string, unknown>)
-    : null;
+  const analysisResult =
+    state?.output != null && !hasSubStates
+      ? extractAnalysisResult(name, state.output as Record<string, unknown>)
+      : null;
 
   return (
     <div
       className={`rounded-lg border bg-card p-3 transition-all duration-300 ${
         isActive
-          ? "border-blue-400 shadow-md shadow-blue-200/50 ring-1 ring-blue-300 dark:shadow-blue-900/30"
+          ? "border-blue-400 shadow-blue-200/50 shadow-md ring-1 ring-blue-300 dark:shadow-blue-900/30"
           : status === "completed"
-          ? "border-green-200 dark:border-green-800"
-          : ""
+            ? "border-green-200 dark:border-green-800"
+            : ""
       }`}
     >
       <button
@@ -109,11 +136,15 @@ export default function AgentCard({ name, state, isActive }: AgentCardProps) {
         onClick={() => setExpanded(!expanded)}
         className="flex w-full items-center gap-2 text-left"
       >
-        {expanded ? <ChevronDown className="size-4 shrink-0" /> : <ChevronRight className="size-4 shrink-0" />}
+        {expanded ? (
+          <ChevronDown className="size-4 shrink-0" />
+        ) : (
+          <ChevronRight className="size-4 shrink-0" />
+        )}
         <StatusIcon status={status} />
         <span className="font-medium">{label}</span>
         {status === "running" && isActive && (
-          <span className="ml-1 animate-pulse text-blue-500 text-sm font-medium">
+          <span className="ml-1 animate-pulse font-medium text-blue-500 text-sm">
             {CURRENT_STEP_LABELS[name] ?? "分析中..."}
           </span>
         )}
@@ -121,22 +152,34 @@ export default function AgentCard({ name, state, isActive }: AgentCardProps) {
           <span className="text-muted-foreground text-sm">排队中...</span>
         )}
         {status === "completed" && analysisResult?.signal && (
-          <span className={`ml-1 text-xs ${
-            analysisResult.signal === "bullish" ? "text-red-500" :
-            analysisResult.signal === "bearish" ? "text-green-500" :
-            "text-muted-foreground"
-          }`}>
-            [{analysisResult.signal === "bullish" ? "看涨" : analysisResult.signal === "bearish" ? "看跌" : "中性"}]
+          <span
+            className={`ml-1 text-xs ${
+              analysisResult.signal === "bullish"
+                ? "text-red-500"
+                : analysisResult.signal === "bearish"
+                  ? "text-green-500"
+                  : "text-muted-foreground"
+            }`}
+          >
+            [
+            {analysisResult.signal === "bullish"
+              ? "看涨"
+              : analysisResult.signal === "bearish"
+                ? "看跌"
+                : "中性"}
+            ]
           </span>
         )}
         {status === "failed" && state?.error && (
-          <span className="text-red-500 text-sm truncate max-w-[200px]">{state.error}</span>
+          <span className="max-w-[200px] truncate text-red-500 text-sm">
+            {state.error}
+          </span>
         )}
       </button>
 
       {/* Expandable content */}
       {expanded && (
-        <div className="mt-3 overflow-y-auto max-h-[60vh] border-t border-border pt-3">
+        <div className="mt-3 max-h-[60vh] overflow-y-auto border-border border-t pt-3">
           {hasSubStates ? (
             <div className="space-y-1">
               {subKeys.map((k) => {
@@ -144,9 +187,14 @@ export default function AgentCard({ name, state, isActive }: AgentCardProps) {
                 return subData != null ? (
                   <SubStateRow key={k} subKey={k} data={subData} />
                 ) : (
-                  <div key={k} className="ml-4 mt-1 flex items-center gap-1 text-sm text-muted-foreground">
+                  <div
+                    key={k}
+                    className="mt-1 ml-4 flex items-center gap-1 text-muted-foreground text-sm"
+                  >
                     <Circle className="size-3" />
-                    <span>{SUB_AGENT_LABEL_ZH[`${name}.${k}`] ?? k}（等待中）</span>
+                    <span>
+                      {SUB_AGENT_LABEL_ZH[`${name}.${k}`] ?? k}（等待中）
+                    </span>
                   </div>
                 );
               })}
@@ -162,7 +210,7 @@ export default function AgentCard({ name, state, isActive }: AgentCardProps) {
               />
             </div>
           ) : state?.output != null ? (
-            <pre className="rounded bg-muted p-2 text-xs overflow-x-auto whitespace-pre-wrap">
+            <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-muted p-2 text-xs">
               {typeof state.output === "string"
                 ? state.output
                 : JSON.stringify(state.output, null, 2)}

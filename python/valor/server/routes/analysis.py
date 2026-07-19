@@ -35,6 +35,8 @@ class AnalysisRequest(BaseModel):
     num_of_news: int = Field(default=5, ge=1, le=100)
     initial_cash: float = 100000.0
     initial_stock: int = 0
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +61,8 @@ async def start_analysis(req: AnalysisRequest):
         try:
             result = run_analysis(
                 ticker=req.ticker,
+                start_date=req.start_date,
+                end_date=req.end_date,
                 show_reasoning=req.show_reasoning,
                 num_of_news=req.num_of_news,
                 portfolio={"cash": req.initial_cash, "stock": req.initial_stock},

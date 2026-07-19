@@ -8,7 +8,6 @@ import {
   OpenAiPng,
   OpenRouterPng,
   SiliconFlowPng,
-  ValueCellAgentPng,
 } from "@/assets/png";
 
 export const MODEL_PROVIDER_ICONS = {

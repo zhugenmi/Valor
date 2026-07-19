@@ -1,12 +1,12 @@
 import { useCallback, useRef } from "react";
-import useSSE from "@/hooks/use-sse";
-import { getServerUrl } from "@/lib/api-client";
 import type {
   AgentCompletedEvent,
   SystemFailedEvent,
   WorkflowCompletedEvent,
   WorkflowStartedEvent,
 } from "@/app/analysis/constants";
+import useSSE from "@/hooks/use-sse";
+import { getServerUrl } from "@/lib/api-client";
 
 export interface StreamAnalysisCallbacks {
   onWorkflowStarted?: (data: WorkflowStartedEvent) => void;
@@ -74,11 +74,13 @@ export function useStreamAnalysis(
       startDate?: string;
       endDate?: string;
     }) => {
-      const { ticker } = params;
+      const { ticker, startDate, endDate } = params;
       const body = JSON.stringify({
         query: ticker,
         agent_name: "ValorAgent",
         conversation_id: crypto.randomUUID(),
+        start_date: startDate,
+        end_date: endDate,
       });
       await connect(body);
     },

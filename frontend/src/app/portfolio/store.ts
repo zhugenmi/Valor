@@ -1,6 +1,6 @@
 import { create } from "zustand";
-import { portfolioApi, type CreatePortfolioInput } from "@/api/portfolio";
-import type { PortfolioSummary, Portfolio } from "./types";
+import { type CreatePortfolioInput, portfolioApi } from "@/api/portfolio";
+import type { Portfolio, PortfolioSummary } from "./types";
 
 interface PortfolioState {
   list: PortfolioSummary[];
@@ -39,10 +39,18 @@ export const usePortfolioStore = create<PortfolioState>((set) => ({
   },
   create: async (input) => {
     const p = await portfolioApi.create(input);
-    set((s) => ({ list: [...s.list, {
-      portfolio_id: p.portfolio_id, name: p.name, benchmark: p.benchmark,
-      cash: p.cash, updated_at: p.updated_at,
-    }] }));
+    set((s) => ({
+      list: [
+        ...s.list,
+        {
+          portfolio_id: p.portfolio_id,
+          name: p.name,
+          benchmark: p.benchmark,
+          cash: p.cash,
+          updated_at: p.updated_at,
+        },
+      ],
+    }));
     return p.portfolio_id;
   },
   remove: async (id) => {

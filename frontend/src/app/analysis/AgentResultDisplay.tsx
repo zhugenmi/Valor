@@ -1,8 +1,18 @@
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  Info,
+  XCircle,
+} from "lucide-react";
 import { useState } from "react";
-import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { AlertTriangle, CheckCircle2, XCircle, Info, ChevronDown } from "lucide-react";
-import type { AnalysisResult, SubSignal, MetricGroup } from "./analysisExtractor";
+import { Progress } from "@/components/ui/progress";
+import type {
+  AnalysisResult,
+  MetricGroup,
+  SubSignal,
+} from "./analysisExtractor";
 
 interface AgentResultDisplayProps {
   result: AnalysisResult;
@@ -12,10 +22,25 @@ interface AgentResultDisplayProps {
   rawData?: unknown;
 }
 
-const SIGNAL_COLORS: Record<string, { bg: string; text: string; icon: typeof CheckCircle2 }> = {
-  bullish: { bg: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400", text: "看涨", icon: CheckCircle2 },
-  bearish: { bg: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400", text: "看跌", icon: XCircle },
-  neutral: { bg: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300", text: "中性", icon: Info },
+const SIGNAL_COLORS: Record<
+  string,
+  { bg: string; text: string; icon: typeof CheckCircle2 }
+> = {
+  bullish: {
+    bg: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+    text: "看涨",
+    icon: CheckCircle2,
+  },
+  bearish: {
+    bg: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+    text: "看跌",
+    icon: XCircle,
+  },
+  neutral: {
+    bg: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
+    text: "中性",
+    icon: Info,
+  },
 };
 
 function ConfidenceBar({ value }: { value: number | string | undefined }) {
@@ -25,8 +50,8 @@ function ConfidenceBar({ value }: { value: number | string | undefined }) {
   const num = typeof value === "string" ? parseFloat(value) : value;
   const pct = num <= 1 ? num * 100 : num;
   return (
-    <div className="max-w-xs w-full">
-      <div className="flex items-center justify-between mb-1 text-xs">
+    <div className="w-full max-w-xs">
+      <div className="mb-1 flex items-center justify-between text-xs">
         <span>置信度</span>
         <span className="font-medium">{pct.toFixed(0)}%</span>
       </div>
@@ -39,7 +64,11 @@ function MetricRow({ label, value }: { label: string; value: unknown }) {
   if (value === undefined || value === null || value === "") return null;
   let str: string;
   if (typeof value === "object") {
-    try { str = JSON.stringify(value); } catch { str = String(value); }
+    try {
+      str = JSON.stringify(value);
+    } catch {
+      str = String(value);
+    }
   } else if (typeof value === "number") {
     str = Number.isInteger(value)
       ? String(value)
@@ -49,29 +78,43 @@ function MetricRow({ label, value }: { label: string; value: unknown }) {
   }
   if (str.length > 200) return null;
   return (
-    <div className="border-b border-border/50 flex gap-2 last:border-0 py-1">
-      <span className="shrink-0 text-muted-foreground text-xs w-28">{label}</span>
+    <div className="flex gap-2 border-border/50 border-b py-1 last:border-0">
+      <span className="w-28 shrink-0 text-muted-foreground text-xs">
+        {label}
+      </span>
       <span className="break-all font-mono text-foreground text-xs">{str}</span>
     </div>
   );
 }
 
-function MetricGroupDisplay({ group, defaultOpen = true }: { group: MetricGroup; defaultOpen?: boolean }) {
+function MetricGroupDisplay({
+  group,
+  defaultOpen = true,
+}: {
+  group: MetricGroup;
+  defaultOpen?: boolean;
+}) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div>
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="cursor-pointer flex gap-1 items-center text-muted-foreground text-sm"
+        className="flex cursor-pointer items-center gap-1 text-muted-foreground text-sm"
       >
-        <ChevronDown className={`size-3 transition-transform ${open ? "rotate-90" : ""}`} />
+        <ChevronDown
+          className={`size-3 transition-transform ${open ? "rotate-90" : ""}`}
+        />
         <span>{group.label}</span>
       </button>
       {open && (
         <div className="mt-1 space-y-0.5">
           {group.rows.map((row, i) => (
-            <MetricRow key={`${group.label}-${row.label}-${i}`} label={row.label} value={row.value} />
+            <MetricRow
+              key={`${group.label}-${row.label}-${i}`}
+              label={row.label}
+              value={row.value}
+            />
           ))}
         </div>
       )}
@@ -83,10 +126,14 @@ function RiskFlags({ flags }: { flags: string[] }) {
   if (!flags.length) return null;
   return (
     <div className="mt-3 space-y-1">
-      <div className="text-muted-foreground text-xs font-medium">风险标记</div>
+      <div className="font-medium text-muted-foreground text-xs">风险标记</div>
       <div className="flex flex-wrap gap-1">
         {flags.map((flag, i) => (
-          <Badge key={`${flag}-${i}`} variant="destructive" className="gap-1 text-xs">
+          <Badge
+            key={`${flag}-${i}`}
+            variant="destructive"
+            className="gap-1 text-xs"
+          >
             <AlertTriangle className="size-2.5" />
             {flag}
           </Badge>
@@ -102,8 +149,8 @@ function SubSignalRow({ sub, index }: { sub: SubSignal; index: number }) {
   const hasMetrics = sub.metrics && Object.keys(sub.metrics).length > 0;
 
   return (
-    <div className="border-b border-border/40 last:border-0 py-1.5">
-      <div className="flex flex-wrap gap-2 items-center">
+    <div className="border-border/40 border-b py-1.5 last:border-0">
+      <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium text-sm">{sub.label}</span>
         {signalInfo && (
           <Badge className={`${signalInfo.bg} text-xs`} variant="outline">
@@ -113,8 +160,9 @@ function SubSignalRow({ sub, index }: { sub: SubSignal; index: number }) {
         )}
         {sub.confidence !== undefined && (
           <span className="text-muted-foreground text-xs">
-            置信度 {typeof sub.confidence === "number"
-              ? `${Math.round((sub.confidence <= 1 ? sub.confidence * 100 : sub.confidence))}%`
+            置信度{" "}
+            {typeof sub.confidence === "number"
+              ? `${Math.round(sub.confidence <= 1 ? sub.confidence * 100 : sub.confidence)}%`
               : sub.confidence}
           </span>
         )}
@@ -122,9 +170,11 @@ function SubSignalRow({ sub, index }: { sub: SubSignal; index: number }) {
           <button
             type="button"
             onClick={() => setExpanded(!expanded)}
-            className="flex gap-0.5 items-center text-muted-foreground hover:text-foreground text-xs transition-colors"
+            className="flex items-center gap-0.5 text-muted-foreground text-xs transition-colors hover:text-foreground"
           >
-            <ChevronDown className={`size-3 transition-transform ${expanded ? "rotate-90" : ""}`} />
+            <ChevronDown
+              className={`size-3 transition-transform ${expanded ? "rotate-90" : ""}`}
+            />
             指标
           </button>
         )}
@@ -147,7 +197,7 @@ function SubSignals({ subSignals }: { subSignals: SubSignal[] }) {
   if (!subSignals.length) return null;
   return (
     <details className="group" open>
-      <summary className="cursor-pointer flex gap-1 items-center text-muted-foreground text-sm">
+      <summary className="flex cursor-pointer items-center gap-1 text-muted-foreground text-sm">
         <span>分项信号</span>
         <ChevronDown className="size-3 transition-transform group-open:rotate-90" />
       </summary>
@@ -172,7 +222,7 @@ export default function AgentResultDisplay({
   return (
     <div className="space-y-3">
       {signalInfo && (
-        <div className="flex flex-wrap gap-2 items-center">
+        <div className="flex flex-wrap items-center gap-2">
           <Badge className={signalInfo.bg} variant="outline">
             <signalInfo.icon className="size-3" />
             {signalInfo.text}
@@ -182,7 +232,7 @@ export default function AgentResultDisplay({
       )}
 
       {result.reasoning && (
-        <div className="prose dark:prose-invert max-w-none prose-sm">
+        <div className="prose dark:prose-invert prose-sm max-w-none">
           <p className="whitespace-pre-wrap text-sm">{result.reasoning}</p>
         </div>
       )}
@@ -194,14 +244,18 @@ export default function AgentResultDisplay({
       {result.metricGroups && result.metricGroups.length > 0 && (
         <div className="space-y-2">
           {result.metricGroups.map((group, i) => (
-            <MetricGroupDisplay key={`group-${i}`} group={group} defaultOpen={i === 0} />
+            <MetricGroupDisplay
+              key={`group-${i}`}
+              group={group}
+              defaultOpen={i === 0}
+            />
           ))}
         </div>
       )}
 
       {result.metrics && Object.keys(result.metrics).length > 0 && (
         <details className="group">
-          <summary className="cursor-pointer flex gap-1 items-center text-muted-foreground text-sm">
+          <summary className="flex cursor-pointer items-center gap-1 text-muted-foreground text-sm">
             <span>关键指标</span>
             <ChevronDown className="size-3 transition-transform group-open:rotate-90" />
           </summary>
@@ -219,7 +273,7 @@ export default function AgentResultDisplay({
         <button
           type="button"
           onClick={onToggleRaw}
-          className="flex gap-1 items-center text-muted-foreground hover:text-foreground text-xs transition-colors"
+          className="flex items-center gap-1 text-muted-foreground text-xs transition-colors hover:text-foreground"
         >
           {showRaw ? "隐藏原始数据" : "查看原始数据"}
           <ChevronDown className="size-3 transition-transform" />
@@ -227,8 +281,10 @@ export default function AgentResultDisplay({
       )}
 
       {showRaw && rawData != null && (
-        <pre className="bg-muted max-h-60 overflow-auto p-2 rounded text-xs mt-2">
-          {typeof rawData === "string" ? rawData : JSON.stringify(rawData, null, 2)}
+        <pre className="mt-2 max-h-60 overflow-auto rounded bg-muted p-2 text-xs">
+          {typeof rawData === "string"
+            ? rawData
+            : JSON.stringify(rawData, null, 2)}
         </pre>
       )}
     </div>

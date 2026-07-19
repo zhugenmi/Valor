@@ -1,16 +1,16 @@
+import { Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router";
-import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { usePortfolioStore } from "./store";
-import HoldingsTable from "./components/HoldingsTable";
+import { cn } from "@/lib/utils";
+import AnalyticsPanel from "./components/AnalyticsPanel";
 import CSVImport from "./components/CSVImport";
 import HoldingForm from "./components/HoldingForm";
-import AnalyticsPanel from "./components/AnalyticsPanel";
-import StrategyList from "./components/StrategyList";
+import HoldingsTable from "./components/HoldingsTable";
 import RebalancePanel from "./components/RebalancePanel";
+import StrategyList from "./components/StrategyList";
+import { usePortfolioStore } from "./store";
 
 export default function PortfolioDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -29,7 +29,9 @@ export default function PortfolioDetailPage() {
         <div>
           <h1 className="font-bold text-2xl">{current.name}</h1>
           <div className="text-gray-500 text-sm">
-            基准 {current.benchmark} · 现金 ¥{Number(current.cash).toLocaleString()} · 持仓 {current.holdings.length} 只
+            基准 {current.benchmark} · 现金 ¥
+            {Number(current.cash).toLocaleString()} · 持仓{" "}
+            {current.holdings.length} 只
           </div>
         </div>
       </div>
@@ -48,11 +50,21 @@ export default function PortfolioDetailPage() {
             </Button>
           </div>
           <HoldingsTable pid={id} holdings={current.holdings} />
-          <HoldingForm pid={id} open={showHoldingForm} onClose={() => setShowHoldingForm(false)} />
+          <HoldingForm
+            pid={id}
+            open={showHoldingForm}
+            onClose={() => setShowHoldingForm(false)}
+          />
         </TabsContent>
-        <TabsContent value="analytics"><AnalyticsPanel pid={id} /></TabsContent>
-        <TabsContent value="strategies"><StrategyList pid={id} /></TabsContent>
-        <TabsContent value="rebalance"><RebalancePanel pid={id} /></TabsContent>
+        <TabsContent value="analytics">
+          <AnalyticsPanel pid={id} />
+        </TabsContent>
+        <TabsContent value="strategies">
+          <StrategyList pid={id} />
+        </TabsContent>
+        <TabsContent value="rebalance">
+          <RebalancePanel pid={id} />
+        </TabsContent>
       </Tabs>
     </div>
   );

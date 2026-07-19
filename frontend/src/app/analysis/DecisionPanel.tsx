@@ -26,7 +26,9 @@ export default function DecisionPanel({ decision }: DecisionPanelProps) {
   const currentPosition = decision.current_position ?? 0;
   const isWatching = decision.action === "hold" && currentPosition === 0;
   const actionLabel = isWatching ? "观望" : ACTION_LABEL_ZH[decision.action];
-  const actionColor = isWatching ? "text-muted-foreground" : ACTION_COLOR[decision.action];
+  const actionColor = isWatching
+    ? "text-muted-foreground"
+    : ACTION_COLOR[decision.action];
 
   return (
     <div className="rounded-lg border-2 border-primary bg-card p-4">
@@ -44,8 +46,12 @@ export default function DecisionPanel({ decision }: DecisionPanelProps) {
       </div>
       {decision.reasoning && (
         <details>
-          <summary className="cursor-pointer text-muted-foreground text-sm">推理过程</summary>
-          <p className="mt-2 whitespace-pre-wrap text-sm">{decision.reasoning}</p>
+          <summary className="cursor-pointer text-muted-foreground text-sm">
+            推理过程
+          </summary>
+          <p className="mt-2 whitespace-pre-wrap text-sm">
+            {decision.reasoning}
+          </p>
         </details>
       )}
     </div>

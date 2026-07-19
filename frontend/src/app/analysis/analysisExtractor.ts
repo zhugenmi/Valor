@@ -86,14 +86,17 @@ const METRIC_KEY_LABELS: Record<string, string> = {
 };
 
 const PERCENT_KEYS = new Set([
-  "volatility", "value_at_risk_95", "max_drawdown",
-  "bull_confidence", "bear_confidence", "debate_confidence",
-  "portfolio_impact", "confidence",
+  "volatility",
+  "value_at_risk_95",
+  "max_drawdown",
+  "bull_confidence",
+  "bear_confidence",
+  "debate_confidence",
+  "portfolio_impact",
+  "confidence",
 ]);
 
-const CURRENCY_KEYS = new Set([
-  "potential_loss", "max_position_size",
-]);
+const CURRENCY_KEYS = new Set(["potential_loss", "max_position_size"]);
 
 const FLAT_SIGNAL_FIELDS: Record<string, { field: string; label: string }[]> = {
   capital_sentiment: [
@@ -120,9 +123,7 @@ function asConf(v: unknown): number | string | undefined {
 }
 
 function _prettifyKey(key: string): string {
-  return key
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function _labelFor(key: string): string {
@@ -132,9 +133,31 @@ function _labelFor(key: string): string {
 function _normalizeSignal(v: unknown): Signal | undefined {
   if (!v) return undefined;
   const s = String(v).toLowerCase().trim();
-  if (s.includes("bull") || s === "positive" || s === "favorable" || s === "buy" || s === "active") return "bullish";
-  if (s.includes("bear") || s === "negative" || s === "unfavorable" || s === "sell" || s === "dormant" || s === "reduce") return "bearish";
-  if (s === "neutral" || s === "normal" || s === "quiet" || s === "hold" || s === "wait") return "neutral";
+  if (
+    s.includes("bull") ||
+    s === "positive" ||
+    s === "favorable" ||
+    s === "buy" ||
+    s === "active"
+  )
+    return "bullish";
+  if (
+    s.includes("bear") ||
+    s === "negative" ||
+    s === "unfavorable" ||
+    s === "sell" ||
+    s === "dormant" ||
+    s === "reduce"
+  )
+    return "bearish";
+  if (
+    s === "neutral" ||
+    s === "normal" ||
+    s === "quiet" ||
+    s === "hold" ||
+    s === "wait"
+  )
+    return "neutral";
   return undefined;
 }
 
@@ -152,19 +175,29 @@ export function formatMetricValue(key: string, value: unknown): string {
     return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
   }
   if (typeof value === "object") {
-    try { return JSON.stringify(value); } catch { return String(value); }
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
   }
   return String(value);
 }
 
 /** Extract a sub-signal from a nested object that has signal/details/metrics fields. */
-function _extractSubSignal(key: string, obj: Record<string, unknown>): SubSignal | null {
+function _extractSubSignal(
+  key: string,
+  obj: Record<string, unknown>,
+): SubSignal | null {
   const hasSignal = "signal" in obj || "sentiment" in obj;
   const hasDetails = typeof obj["details"] === "string";
-  const hasMetrics = typeof obj["metrics"] === "object" && obj["metrics"] !== null;
+  const hasMetrics =
+    typeof obj["metrics"] === "object" && obj["metrics"] !== null;
   if (!hasSignal && !hasDetails && !hasMetrics) return null;
 
-  const metrics = hasMetrics ? (obj["metrics"] as Record<string, unknown>) : undefined;
+  const metrics = hasMetrics
+    ? (obj["metrics"] as Record<string, unknown>)
+    : undefined;
   return {
     label: SUB_SIGNAL_LABELS[key] ?? _labelFor(key),
     signal: _normalizeSignal(obj["signal"] ?? obj["sentiment"]),
@@ -175,7 +208,9 @@ function _extractSubSignal(key: string, obj: Record<string, unknown>): SubSignal
 }
 
 /** If a nested object is itself a container of sub-signals (e.g. strategy_signals), extract them. */
-function _extractSubSignalsFromContainer(container: Record<string, unknown>): SubSignal[] {
+function _extractSubSignalsFromContainer(
+  container: Record<string, unknown>,
+): SubSignal[] {
   const result: SubSignal[] = [];
   for (const [k, v] of Object.entries(container)) {
     if (v && typeof v === "object" && !Array.isArray(v)) {
@@ -187,7 +222,10 @@ function _extractSubSignalsFromContainer(container: Record<string, unknown>): Su
 }
 
 /** Build a metric group from a flat object of primitives. */
-function _buildMetricGroup(groupKey: string, obj: Record<string, unknown>): MetricGroup | null {
+function _buildMetricGroup(
+  groupKey: string,
+  obj: Record<string, unknown>,
+): MetricGroup | null {
   const rows: { label: string; value: unknown }[] = [];
   for (const [k, v] of Object.entries(obj)) {
     if (v == null) continue;
@@ -195,7 +233,10 @@ function _buildMetricGroup(groupKey: string, obj: Record<string, unknown>): Metr
     rows.push({ label: _labelFor(k), value: formatMetricValue(k, v) });
   }
   if (rows.length === 0) return null;
-  return { label: METRIC_GROUP_LABELS[groupKey] ?? _prettifyKey(groupKey), rows };
+  return {
+    label: METRIC_GROUP_LABELS[groupKey] ?? _prettifyKey(groupKey),
+    rows,
+  };
 }
 
 function _generateSummary(
@@ -209,7 +250,7 @@ function _generateSummary(
       ? confidence <= 1
         ? `${Math.round(confidence * 100)}%`
         : `${confidence}%`
-      : confidence ?? "";
+      : (confidence ?? "");
 
   if (!subSignals || subSignals.length === 0) {
     return `综合信号: ${SIGNAL_ZH[signal]}${confidenceStr ? ` (${confidenceStr})` : ""}`;
@@ -223,7 +264,12 @@ function _generateSummary(
 
 /** Detect if a state dict already looks like an analysis payload (for bull_bear_debate sub-events). */
 function _looksLikeAnalysis(state: Record<string, unknown>): boolean {
-  return "signal" in state || "sentiment" in state || "reasoning" in state || "key_points" in state;
+  return (
+    "signal" in state ||
+    "sentiment" in state ||
+    "reasoning" in state ||
+    "key_points" in state
+  );
 }
 
 /** Extract normalized analysis result from an agent's state_delta. */
@@ -238,7 +284,9 @@ export function extractAnalysisResult(
   // 1) For agents that store analysis under a named key in data
   const analysisKey = AGENT_ANALYSIS_KEYS[agentName];
   if (analysisKey) {
-    const analysis = stateData[analysisKey] as Record<string, unknown> | undefined;
+    const analysis = stateData[analysisKey] as
+      | Record<string, unknown>
+      | undefined;
     if (analysis) {
       return _parseAnalysisDict(analysis, agentName);
     }
@@ -273,8 +321,14 @@ function _parseAnalysisDict(
   const riskFlags = _extractRiskFlags(analysis);
 
   const skipKeys = new Set([
-    "signal", "sentiment", "confidence", "reasoning", "risk_flags", "riskFlags",
-    "key_points", "key_factors",
+    "signal",
+    "sentiment",
+    "confidence",
+    "reasoning",
+    "risk_flags",
+    "riskFlags",
+    "key_points",
+    "key_factors",
   ]);
   const metrics: Record<string, unknown> = {};
   const metricGroups: MetricGroup[] = [];
@@ -285,8 +339,14 @@ function _parseAnalysisDict(
   const rawReasoning = analysis["reasoning"];
   if (typeof rawReasoning === "string") {
     reasoningText = rawReasoning.trim() || undefined;
-  } else if (rawReasoning && typeof rawReasoning === "object" && !Array.isArray(rawReasoning)) {
-    for (const [k, v] of Object.entries(rawReasoning as Record<string, unknown>)) {
+  } else if (
+    rawReasoning &&
+    typeof rawReasoning === "object" &&
+    !Array.isArray(rawReasoning)
+  ) {
+    for (const [k, v] of Object.entries(
+      rawReasoning as Record<string, unknown>,
+    )) {
       if (v && typeof v === "object" && !Array.isArray(v)) {
         const sub = _extractSubSignal(k, v as Record<string, unknown>);
         if (sub) subSignals.push(sub);
@@ -370,7 +430,10 @@ function _parseAnalysisDict(
 }
 
 /** For objects like stress_test_results: {market_crash: {...}, moderate_decline: {...}} - each scenario becomes a group. */
-function _extractNestedMetricGroups(parentKey: string, container: Record<string, unknown>): MetricGroup[] {
+function _extractNestedMetricGroups(
+  parentKey: string,
+  container: Record<string, unknown>,
+): MetricGroup[] {
   const groups: MetricGroup[] = [];
   let hasNested = false;
   for (const [k, v] of Object.entries(container)) {
@@ -379,7 +442,8 @@ function _extractNestedMetricGroups(parentKey: string, container: Record<string,
       const sub = v as Record<string, unknown>;
       const group = _buildMetricGroup(k, sub);
       if (group) {
-        const parentLabel = METRIC_GROUP_LABELS[parentKey] ?? _prettifyKey(parentKey);
+        const parentLabel =
+          METRIC_GROUP_LABELS[parentKey] ?? _prettifyKey(parentKey);
         group.label = `${parentLabel}: ${group.label}`;
         groups.push(group);
       }
@@ -394,7 +458,9 @@ function _extractRiskFlags(analysis: Record<string, unknown>): string[] {
   return [];
 }
 
-function _extractMarketData(data: Record<string, unknown>): AnalysisResult | null {
+function _extractMarketData(
+  data: Record<string, unknown>,
+): AnalysisResult | null {
   const metrics: Record<string, unknown> = {};
   const marketCap = data["market_cap"];
   if (marketCap != null && Number(marketCap) > 0) {
@@ -403,8 +469,12 @@ function _extractMarketData(data: Record<string, unknown>): AnalysisResult | nul
 
   const prices = data["prices"] as Array<Record<string, unknown>> | undefined;
   if (prices && prices.length > 0) {
-    const closes = prices.map((p) => Number(p["close"])).filter(Number.isFinite);
-    const volumes = prices.map((p) => Number(p["volume"])).filter(Number.isFinite);
+    const closes = prices
+      .map((p) => Number(p["close"]))
+      .filter(Number.isFinite);
+    const volumes = prices
+      .map((p) => Number(p["volume"]))
+      .filter(Number.isFinite);
     if (closes.length > 0) {
       const maxClose = Math.max(...closes);
       const minClose = Math.min(...closes);
@@ -415,7 +485,9 @@ function _extractMarketData(data: Record<string, unknown>): AnalysisResult | nul
       metrics["数据天数"] = closes.length;
     }
     if (volumes.length > 0) {
-      metrics["日均成交量"] = Math.round(volumes.reduce((a, b) => a + b, 0) / volumes.length).toLocaleString();
+      metrics["日均成交量"] = Math.round(
+        volumes.reduce((a, b) => a + b, 0) / volumes.length,
+      ).toLocaleString();
     }
   }
 
@@ -432,9 +504,13 @@ function _extractMarketData(data: Record<string, unknown>): AnalysisResult | nul
   };
 }
 
-function _extractPortfolioDecision(state: Record<string, unknown>): AnalysisResult | null {
+function _extractPortfolioDecision(
+  state: Record<string, unknown>,
+): AnalysisResult | null {
   const meta = state["metadata"] as Record<string, unknown> | undefined;
-  const decision = meta?.["portfolio_management_agent_decision_details"] as Record<string, unknown> | undefined;
+  const decision = meta?.["portfolio_management_agent_decision_details"] as
+    | Record<string, unknown>
+    | undefined;
   if (!decision) return null;
 
   return {
@@ -442,8 +518,8 @@ function _extractPortfolioDecision(state: Record<string, unknown>): AnalysisResu
     confidence: asConf(decision["confidence"]),
     reasoning: (decision["reasoning_snippet"] as string) ?? undefined,
     metrics: {
-      "操作": decision["action"] ?? "N/A",
-      "数量": decision["quantity"] ?? "N/A",
+      操作: decision["action"] ?? "N/A",
+      数量: decision["quantity"] ?? "N/A",
     },
   };
 }
@@ -463,7 +539,8 @@ function _extractFromMessages(
 
     // Try to parse as JSON
     try {
-      const parsed = typeof content === "string" ? JSON.parse(content) : content;
+      const parsed =
+        typeof content === "string" ? JSON.parse(content) : content;
       if (parsed && typeof parsed === "object") {
         return _parseAnalysisDict(parsed as Record<string, unknown>, agentName);
       }

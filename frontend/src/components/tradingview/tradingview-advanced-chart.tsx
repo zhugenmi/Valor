@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import defaultMap from "./tv-symbol-map.json";
 import { loadTradingViewLib } from "./tv-load";
+import defaultMap from "./tv-symbol-map.json";
 
 interface TradingViewAdvancedChartProps {
   ticker: string;
@@ -25,7 +25,9 @@ function TradingViewAdvancedChart({
     defaultMap as Record<string, string>,
   );
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const widgetRef = useRef<InstanceType<Window["TradingView"]["widget"]> | null>(null);
+  const widgetRef = useRef<InstanceType<
+    Window["TradingView"]["widget"]
+  > | null>(null);
   const containerIdRef = useRef(
     `tv_chart_${Math.random().toString(36).slice(2, 10)}`,
   );

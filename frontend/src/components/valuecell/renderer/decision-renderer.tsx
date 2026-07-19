@@ -75,7 +75,9 @@ const DecisionRenderer: FC<DecisionRendererProps> = ({ content }) => {
           <ActionIcon className={cn("size-6", config.textClass)} />
         </div>
         <div className="flex flex-col">
-          <p className={cn("font-semibold text-lg leading-6", config.textClass)}>
+          <p
+            className={cn("font-semibold text-lg leading-6", config.textClass)}
+          >
             {config.label}
           </p>
           <p className="text-muted-foreground text-xs leading-4">

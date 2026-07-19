@@ -1,6 +1,12 @@
 import { useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { usePortfolioStore } from "../store";
@@ -23,7 +29,9 @@ export default function PortfolioForm({ open, onClose, onCreated }: Props) {
     setSubmitting(true);
     try {
       const id = await create({ name: name.trim(), benchmark, cash });
-      setName(""); setBenchmark("000300"); setCash("0");
+      setName("");
+      setBenchmark("000300");
+      setCash("0");
       onCreated?.(id);
       onClose();
     } finally {
@@ -40,19 +48,32 @@ export default function PortfolioForm({ open, onClose, onCreated }: Props) {
         <div className="space-y-3">
           <div>
             <Label>组合名称</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：主力" />
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="如：主力"
+            />
           </div>
           <div>
             <Label>基准</Label>
-            <Input value={benchmark} onChange={(e) => setBenchmark(e.target.value)} />
+            <Input
+              value={benchmark}
+              onChange={(e) => setBenchmark(e.target.value)}
+            />
           </div>
           <div>
             <Label>初始现金</Label>
-            <Input value={cash} onChange={(e) => setCash(e.target.value)} type="number" />
+            <Input
+              value={cash}
+              onChange={(e) => setCash(e.target.value)}
+              type="number"
+            />
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>取消</Button>
+          <Button variant="outline" onClick={onClose}>
+            取消
+          </Button>
           <Button onClick={handleSubmit} disabled={submitting || !name.trim()}>
             {submitting ? "创建中..." : "创建"}
           </Button>

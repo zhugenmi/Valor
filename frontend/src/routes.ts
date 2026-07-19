@@ -16,9 +16,7 @@ export default [
     ]),
   ]),
 
-  ...prefix("/analysis", [
-    index("app/analysis/index.tsx"),
-  ]),
+  ...prefix("/analysis", [index("app/analysis/index.tsx")]),
 
   route("/market", "app/market/agents.tsx"),
 

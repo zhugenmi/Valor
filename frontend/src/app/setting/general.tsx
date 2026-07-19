@@ -18,15 +18,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-
+import { useTauriInfo } from "@/hooks/use-tauri-info";
+import { useUpdateToast } from "@/hooks/use-update-toast";
 import type { LanguageCode, StockColorMode } from "@/store/settings-store";
 import {
   useLanguage,
   useSettingsActions,
   useStockColorMode,
 } from "@/store/settings-store";
-import { useTauriInfo } from "@/hooks/use-tauri-info";
-import { useUpdateToast } from "@/hooks/use-update-toast";
 
 export default function GeneralPage() {
   const { t } = useTranslation();

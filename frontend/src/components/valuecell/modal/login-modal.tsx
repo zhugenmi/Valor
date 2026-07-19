@@ -42,7 +42,7 @@ export default function LoginModal({ children }: LoginModalProps) {
         ? t("auth.login.providers.google")
         : t("auth.login.providers.apple");
 
-      window.open(`/login?provider=${provider}`, "_blank");
+    window.open(`/login?provider=${provider}`, "_blank");
     toast.info(t("auth.login.errors.timeout.description"));
     setPendingAction(null);
   };

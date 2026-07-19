@@ -26,7 +26,9 @@ function fmtDate(d: Date): string {
 function monthsBetween(start: string, end: string): number {
   const s = new Date(start);
   const e = new Date(end);
-  return (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth());
+  return (
+    (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth())
+  );
 }
 
 export function defaultAnalysisDates(): { startDate: string; endDate: string } {
@@ -36,11 +38,16 @@ export function defaultAnalysisDates(): { startDate: string; endDate: string } {
   return { startDate: fmtDate(start), endDate: fmtDate(end) };
 }
 
-export default function AdvancedParams({ value, onChange }: AdvancedParamsProps) {
+export default function AdvancedParams({
+  value,
+  onChange,
+}: AdvancedParamsProps) {
   const today = fmtDate(new Date());
   const activePreset: DatePreset | null =
     value.endDate === today
-      ? (PRESETS.find((p) => monthsBetween(value.startDate, value.endDate) === p.months)?.key ?? null)
+      ? (PRESETS.find(
+          (p) => monthsBetween(value.startDate, value.endDate) === p.months,
+        )?.key ?? null)
       : null;
 
   const handlePreset = (months: number) => {

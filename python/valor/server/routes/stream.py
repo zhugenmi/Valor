@@ -1,6 +1,6 @@
 """SSE streaming endpoint for agent analysis.
 
-Receives a POST request with { query, agent_name, conversation_id }
+Receives a POST request with { query, agent_name, conversation_id, start_date?, end_date? }
 and streams back SSE events (conversation_started → reasoning → message → done).
 
 License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial
@@ -226,6 +226,8 @@ async def agent_stream(body: dict):
     agent_name: str = body.get("agent_name", "ValorAgent")
     conversation_id: str = body.get("conversation_id") or str(uuid.uuid4())
     thread_id: str = str(uuid.uuid4())
+    start_date: str | None = body.get("start_date") or None
+    end_date: str | None = body.get("end_date") or None
 
     async def _stream() -> AsyncGenerator[str, None]:
         # 1. conversation_started
@@ -322,7 +324,12 @@ async def agent_stream(body: dict):
                 target_name = agent_message_name(intent.agent)
                 result = await loop.run_in_executor(
                     None,
-                    lambda: run_single_agent(ticker=ticker, agent_name=intent.agent),
+                    lambda: run_single_agent(
+                        ticker=ticker,
+                        agent_name=intent.agent,
+                        start_date=start_date,
+                        end_date=end_date,
+                    ),
                 )
 
                 # Extract the target agent's final message
@@ -410,6 +417,8 @@ async def agent_stream(body: dict):
                     try:
                         for chunk in stream_analysis(
                             ticker=ticker,
+                            start_date=start_date,
+                            end_date=end_date,
                             stage_callback=_stage_callback,
                         ):
                             _put(("chunk", chunk))

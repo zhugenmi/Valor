@@ -13,7 +13,9 @@ function TradingViewTickerTape({
   locale = "en",
 }: TradingViewTickerTapeProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const widgetRef = useRef<InstanceType<Window["TradingView"]["TickerTape"]> | null>(null);
+  const widgetRef = useRef<InstanceType<
+    Window["TradingView"]["TickerTape"]
+  > | null>(null);
   const containerIdRef = useRef(
     `tv_tape_${Math.random().toString(36).slice(2, 10)}`,
   );
