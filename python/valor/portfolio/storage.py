@@ -243,6 +243,21 @@ def update_lot(
     return p
 
 
+def remove_lot(portfolio_id: str, ticker: str, lot_id: str) -> Portfolio:
+    p = load_portfolio(portfolio_id)
+    idx = _find_holding_index(p, ticker)
+    if idx < 0:
+        raise HoldingNotFound(ticker)
+    h = p.holdings[idx]
+    lot_index = next((i for i, lot in enumerate(h.lots) if lot.lot_id == lot_id), -1)
+    if lot_index < 0:
+        raise LotNotFound(lot_id)
+    h.lots.pop(lot_index)
+    _cleanup_holding_if_empty(p, idx)
+    save_portfolio(p)
+    return p
+
+
 def update_holding(portfolio_id: str, ticker: str, holding: Holding) -> Portfolio:
     p = load_portfolio(portfolio_id)
     idx = _find_holding_index(p, ticker)

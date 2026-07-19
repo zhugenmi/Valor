@@ -5,7 +5,8 @@ import pytest
 from valor.portfolio.models import Holding, Lot, Portfolio, SellLot
 from valor.portfolio.storage import (
     DATA_DIR, add_holding, add_sell, deduct_lots_weighted, gen_sell_id,
-    save_portfolio, set_data_dir, HoldingNotFound, LotNotFound, update_lot,
+    remove_lot, save_portfolio, set_data_dir, HoldingNotFound, LotNotFound,
+    update_lot,
 )
 
 
@@ -225,3 +226,48 @@ def test_update_lot_holding_not_found():
     _seed_portfolio()
     with pytest.raises(HoldingNotFound):
         update_lot("pf_t", "000001", "l1", {"quantity": 50})
+
+
+def test_remove_lot_basic():
+    _seed_portfolio()
+    _seed_holding("pf_t", "600519", [
+        _lot("l1", 100, "1689.50"),
+        _lot("l2", 50, "1700.00"),
+    ])
+    updated = remove_lot("pf_t", "600519", "l1")
+    assert len(updated.holdings[0].lots) == 1
+    assert updated.holdings[0].lots[0].lot_id == "l2"
+
+
+def test_remove_last_lot_no_sell_lots_deletes_holding():
+    _seed_portfolio()
+    _seed_holding("pf_t", "600519", [_lot("l1", 100, "1689.50")])
+    updated = remove_lot("pf_t", "600519", "l1")
+    assert len(updated.holdings) == 0
+
+
+def test_remove_last_lot_with_sell_lots_keeps_holding():
+    _seed_portfolio()
+    _seed_holding("pf_t", "600519", [_lot("l1", 100, "1689.50")])
+    add_sell("pf_t", "600519", SellLot(
+        sell_id="", sell_date=date(2026, 7, 19), quantity=50,
+        sell_price=Decimal("1820.00"), fees=Decimal("5.00"),
+        realized_pnl=Decimal("0"), avg_cost_at_sell=Decimal("0"),
+    ))
+    updated = remove_lot("pf_t", "600519", "l1")
+    assert len(updated.holdings) == 1
+    assert len(updated.holdings[0].sell_lots) == 1
+    assert len(updated.holdings[0].lots) == 0
+
+
+def test_remove_lot_not_found():
+    _seed_portfolio()
+    _seed_holding("pf_t", "600519", [_lot("l1", 100, "1689.50")])
+    with pytest.raises(LotNotFound):
+        remove_lot("pf_t", "600519", "l_missing")
+
+
+def test_remove_lot_holding_not_found():
+    _seed_portfolio()
+    with pytest.raises(HoldingNotFound):
+        remove_lot("pf_t", "000001", "l1")
