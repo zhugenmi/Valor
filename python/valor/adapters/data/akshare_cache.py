@@ -14,7 +14,11 @@ import pandas as pd
 
 from valor.adapters.data.sqlite_cache import AkshareSQLiteCache
 from valor.network.proxy_manager import ProxyManager
-from valor.adapters.data.baostock_client import query_history_k_data_plus, query_trade_dates
+from valor.adapters.data.baostock_client import (
+    BaoStockUnavailable,
+    query_history_k_data_plus,
+    query_trade_dates,
+)
 from valor.utils.logging_config import setup_logger
 
 # Column name constants (use unicode escapes to avoid encoding glitches)
@@ -499,16 +503,32 @@ def get_price_history_df(
 
     new_frames: List[pd.DataFrame] = []
     for seg_start, seg_end in missing_segments:
-        raw = query_history_k_data_plus(
-            symbol=symbol,
-            start_date=seg_start.strftime("%Y-%m-%d"),
-            end_date=seg_end.strftime("%Y-%m-%d"),
-            adjust=adjust,
-        )
-        prepared = _prepare_history_frame(raw, symbol, adjust)
+        start_str = seg_start.strftime("%Y-%m-%d")
+        end_str = seg_end.strftime("%Y-%m-%d")
+        prepared = pd.DataFrame()
+        try:
+            raw = query_history_k_data_plus(
+                symbol=symbol,
+                start_date=start_str,
+                end_date=end_str,
+                adjust=adjust,
+            )
+            prepared = _prepare_history_frame(raw, symbol, adjust)
+        except (BaoStockUnavailable, RuntimeError) as exc:
+            logger.warning(
+                "⚠️ BaoStock K线拉取失败，降级 akshare: %s [%s -> %s] (%s)",
+                symbol, start_str, end_str, exc,
+            )
+            prepared = _fetch_kline_via_akshare(symbol, start_str, end_str, adjust)
+
         if not prepared.empty:
             _cache_history_rows(prepared)
             new_frames.append(prepared)
+        else:
+            logger.warning(
+                "⚠️ K线双源均失败: %s [%s -> %s]，跳过该段（已有缓存段仍可用）",
+                symbol, start_str, end_str,
+            )
 
     if not cached_frames and not new_frames:
         return pd.DataFrame()

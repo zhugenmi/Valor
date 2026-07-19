@@ -13,6 +13,9 @@ import pandas as pd
 import pytest
 
 from valor.adapters.data.akshare_cache import _fetch_kline_via_akshare
+from valor.adapters.data import akshare_cache as ac_module
+from valor.adapters.data.baostock_client import BaoStockUnavailable
+from valor.adapters.data.sqlite_cache import AkshareSQLiteCache
 
 
 def _fake_akshare_df() -> pd.DataFrame:
@@ -114,3 +117,114 @@ def test_fetch_kline_via_akshare_handles_missing_columns_gracefully():
     # amount/turnover/amplitude absent -> default 0
     assert df["amount"].iloc[0] == 0
     assert df["turnover"].iloc[0] == 0
+
+
+# ---------------------------------------------------------------------------
+# Task 3: Fallback wiring in get_price_history_df
+# ---------------------------------------------------------------------------
+
+
+def _fake_akshare_df_for_range(trading_days: list[str]) -> pd.DataFrame:
+    """Build a fake akshare df covering the given trading days."""
+    n = len(trading_days)
+    return pd.DataFrame({
+        "日期": trading_days,
+        "开盘": [10.0] * n,
+        "收盘": [10.2] * n,
+        "最高": [10.5] * n,
+        "最低": [9.9] * n,
+        "成交量": [100000] * n,
+        "成交额": [1020000] * n,
+        "振幅": [6.0] * n,
+        "涨跌幅": [2.0] * n,
+        "涨跌额": [0.2] * n,
+        "换手率": [1.0] * n,
+    })
+
+
+@pytest.fixture
+def temp_cache(monkeypatch: pytest.MonkeyPatch, tmp_path) -> AkshareSQLiteCache:
+    cache = AkshareSQLiteCache(tmp_path / "test.db")
+    monkeypatch.setattr(ac_module, "cache", cache)
+    return cache
+
+
+def _trade_dates_df(start: str, end: str) -> pd.DataFrame:
+    dates = pd.bdate_range(start=start, end=end)
+    return pd.DataFrame({
+        "calendar_date": dates.strftime("%Y-%m-%d"),
+        "is_trading_day": [1] * len(dates),
+    })
+
+
+def test_get_price_history_df_falls_back_to_akshare_on_baostock_blacklist(temp_cache):
+    """When BaoStock raises BaoStockUnavailable, akshare fallback fills the gap."""
+    start_dt = pd.Timestamp("2026-07-13")
+    end_dt = pd.Timestamp("2026-07-17")
+
+    trading_days = list(pd.bdate_range("2026-07-13", "2026-07-17").strftime("%Y-%m-%d"))
+
+    def baostock_unavailable(*args, **kwargs):
+        raise BaoStockUnavailable("circuit open")
+
+    with patch("valor.adapters.data.akshare_cache.query_trade_dates",
+               return_value=_trade_dates_df("2026-07-13", "2026-07-17")), \
+         patch("valor.adapters.data.akshare_cache.query_history_k_data_plus",
+               side_effect=baostock_unavailable), \
+         patch("valor.adapters.data.akshare_cache.ak.stock_zh_a_hist",
+               return_value=_fake_akshare_df_for_range(trading_days)):
+        df = ac_module.get_price_history_df(
+            symbol="000858",
+            start_date=start_dt,
+            end_date=end_dt,
+            adjust="qfq",
+        )
+
+    assert not df.empty
+    # Should have rows for the trading days in range
+    assert len(df) >= 1
+    # Verify data was cached (akshare rows went into baostock_history_k)
+    cached = temp_cache.fetch_records(
+        table=ac_module.HISTORY_TABLE,
+        filters={"symbol": "000858", "adjust_flag": "qfq"},
+    )
+    assert len(cached) >= 1
+
+
+def test_get_price_history_df_returns_cached_when_both_sources_fail(temp_cache):
+    """If both BaoStock and akshare fail, cached segments are still returned."""
+    start_dt = pd.Timestamp("2026-07-13")
+    end_dt = pd.Timestamp("2026-07-17")
+
+    # Pre-seed cache with one row in range
+    seed_df = pd.DataFrame([{
+        "symbol": "000858",
+        "adjust_flag": "qfq",
+        "date": pd.Timestamp("2026-07-13"),
+        "open": 10.0, "high": 10.5, "low": 9.9, "close": 10.2,
+        "volume": 100000, "amount": 1020000,
+        "amplitude": 6.0, "pct_change": 0.02,
+        "change_amount": 0.2, "turnover": 0.01,
+    }])
+    temp_cache.upsert_records(
+        table=ac_module.HISTORY_TABLE,
+        records=seed_df.to_dict("records"),
+        key_columns=["symbol", "adjust_flag", "date"],
+    )
+
+    with patch("valor.adapters.data.akshare_cache.query_trade_dates",
+               return_value=_trade_dates_df("2026-07-13", "2026-07-17")), \
+         patch("valor.adapters.data.akshare_cache.query_history_k_data_plus",
+               side_effect=BaoStockUnavailable("circuit open")), \
+         patch("valor.adapters.data.akshare_cache.ak.stock_zh_a_hist",
+               return_value=pd.DataFrame()):
+        df = ac_module.get_price_history_df(
+            symbol="000858",
+            start_date=start_dt,
+            end_date=end_dt,
+            adjust="qfq",
+        )
+
+    # Should still return the cached row, not empty
+    assert not df.empty
+    assert pd.Timestamp("2026-07-13") in df["date"].dt.normalize().tolist()
