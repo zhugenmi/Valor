@@ -27,8 +27,10 @@ from valor.adapters.data.baostock_client import (
 @pytest.fixture(autouse=True)
 def _reset_circuit():
     reset_circuit_breaker()
+    baostock_client._LOGGED_IN = False
     yield
     reset_circuit_breaker()
+    baostock_client._LOGGED_IN = False
 
 
 def _login_result(error_code: str, error_msg: str) -> SimpleNamespace:
