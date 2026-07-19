@@ -258,6 +258,19 @@ async def update_lot(pid: str, ticker: str, lot_id: str, body: LotPatch):
     return ok(updated.model_dump(mode="json"))
 
 
+@router.delete("/{pid}/holdings/{ticker}/lots/{lot_id}")
+async def delete_lot(pid: str, ticker: str, lot_id: str):
+    try:
+        storage.remove_lot(pid, ticker, lot_id)
+    except storage.PortfolioNotFound:
+        raise HTTPException(status_code=404, detail="portfolio not found")
+    except storage.HoldingNotFound:
+        raise HTTPException(status_code=404, detail="holding not found")
+    except storage.LotNotFound:
+        raise HTTPException(status_code=404, detail="lot not found")
+    return ok({"deleted": lot_id})
+
+
 # --- Analytics ---
 
 

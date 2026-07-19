@@ -513,6 +513,48 @@ def test_update_lot_holding_not_found_404(app_client):
     assert resp.status_code == 404
 
 
+def test_delete_lot_success(app_client):
+    pid = _seed(app_client)
+    _seed_holding(app_client, pid, qty=100)
+    p = app_client.get(f"/api/v1/portfolios/{pid}").json()["data"]
+    lot_id = p["holdings"][0]["lots"][0]["lot_id"]
+    resp = app_client.delete(
+        f"/api/v1/portfolios/{pid}/holdings/600519/lots/{lot_id}",
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["deleted"] == lot_id
+    p2 = app_client.get(f"/api/v1/portfolios/{pid}").json()["data"]
+    assert len(p2["holdings"]) == 0
+
+
+def test_delete_lot_keeps_holding_when_has_sell_lots(app_client):
+    pid = _seed(app_client)
+    _seed_holding(app_client, pid, qty=100)
+    app_client.post(
+        f"/api/v1/portfolios/{pid}/holdings/600519/sells",
+        json={"sell_date": "2026-07-19", "quantity": 50, "sell_price": "1820.00", "fees": "5.00"},
+    )
+    p = app_client.get(f"/api/v1/portfolios/{pid}").json()["data"]
+    lot_id = p["holdings"][0]["lots"][0]["lot_id"]
+    resp = app_client.delete(
+        f"/api/v1/portfolios/{pid}/holdings/600519/lots/{lot_id}",
+    )
+    assert resp.status_code == 200
+    p2 = app_client.get(f"/api/v1/portfolios/{pid}").json()["data"]
+    assert len(p2["holdings"]) == 1
+    assert len(p2["holdings"][0]["sell_lots"]) == 1
+    assert len(p2["holdings"][0]["lots"]) == 0
+
+
+def test_delete_lot_not_found_404(app_client):
+    pid = _seed(app_client)
+    _seed_holding(app_client, pid)
+    resp = app_client.delete(
+        f"/api/v1/portfolios/{pid}/holdings/600519/lots/lot_missing",
+    )
+    assert resp.status_code == 404
+
+
 # --- Sell Lots ---
 
 
