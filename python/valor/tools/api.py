@@ -383,10 +383,12 @@ def get_price_history(
             return pd.DataFrame()
 
         min_required_days = 120
+        widen_performed = False
         if len(df) < min_required_days:
             logger.warning("Insufficient data ({n} days), extending range...", n=len(df))
             wider_start = end_date_obj - timedelta(days=730)
             df = _fetch(wider_start, end_date_obj)
+            widen_performed = True
 
         df["momentum_1m"] = df["close"].pct_change(periods=20)
         df["momentum_3m"] = df["close"].pct_change(periods=60)
@@ -422,6 +424,16 @@ def get_price_history(
         )
         df["skewness"] = returns.rolling(window=20).skew()
         df["kurtosis"] = returns.rolling(window=20).kurt()
+
+        if widen_performed:
+            original_mask = (df["date"] >= pd.Timestamp(start_date_obj)) & (
+                df["date"] <= pd.Timestamp(end_date_obj)
+            )
+            df = df.loc[original_mask].copy()
+            logger.info(
+                "Widen range trimmed back to original window: {n} rows for {s}",
+                n=len(df), s=symbol,
+            )
 
         df = df.sort_values("date").reset_index(drop=True)
         logger.info("Price history fetched: {n} records for {s}", n=len(df), s=symbol)
