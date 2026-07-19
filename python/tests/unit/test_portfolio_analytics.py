@@ -133,3 +133,34 @@ async def test_portfolio_beta():
     )
     assert result.portfolio_beta is not None
     assert 0.8 < result.portfolio_beta < 1.2
+
+
+@pytest.mark.asyncio
+async def test_compute_analytics_realized_pnl_aggregation():
+    """SellLot.realized_pnl 应聚合到 PositionMetric.realized_pnl。"""
+    from valor.portfolio.models import SellLot
+
+    p = Portfolio(
+        portfolio_id="pf_t", name="t", benchmark="000300",
+        cash=Decimal("0"),
+        created_at=datetime(2026, 7, 17), updated_at=datetime(2026, 7, 17),
+        holdings=[
+            Holding(
+                ticker="600519", name="贵州茅台",
+                lots=[Lot(lot_id="l1", open_date=date(2024, 1, 1), quantity=70, cost_price=Decimal("1689.50"))],
+                sell_lots=[
+                    SellLot(sell_id="s1", sell_date=date(2026, 7, 1), quantity=30,
+                            sell_price=Decimal("1820.00"), fees=Decimal("15.00"),
+                            realized_pnl=Decimal("3900.00"), avg_cost_at_sell=Decimal("1689.50")),
+                    SellLot(sell_id="s2", sell_date=date(2026, 7, 10), quantity=0,
+                            sell_price=Decimal("0"), fees=Decimal("0"),
+                            realized_pnl=Decimal("100.00"), avg_cost_at_sell=Decimal("0")),
+                ],
+            ),
+        ],
+    )
+    price_lookup = FakePriceLookup({"600519": Decimal("1800.00")})
+    result = await compute_analytics(p, price_lookup)
+    pos = result.positions[0]
+    # 3900 + 100 = 4000
+    assert pos.realized_pnl == Decimal("4000.00")

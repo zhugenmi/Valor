@@ -79,12 +79,17 @@ async def compute_analytics(
         price = await price_lookup.get(h.ticker, as_of)
         market_value = Decimal(qty) * price
         pnl = market_value - cost_value
+        realized = sum(
+            (s.realized_pnl for s in h.sell_lots),
+            Decimal("0"),
+        )
         positions.append(PositionMetric(
             ticker=h.ticker, name=h.name, quantity=qty, cost_price=avg_cost,
             current_price=price, market_value=market_value, cost_value=cost_value,
             unrealized_pnl=pnl,
             unrealized_pnl_pct=float(pnl / cost_value) if cost_value else 0.0,
             weight=0.0,
+            realized_pnl=realized,
         ))
     total_mv = sum((p.market_value for p in positions), Decimal("0"))
     total_cost = sum((p.cost_value for p in positions), Decimal("0"))
