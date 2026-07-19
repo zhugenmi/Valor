@@ -7,10 +7,22 @@ export interface Lot {
   note?: string | null;
 }
 
+export interface SellLot {
+  sell_id: string;
+  sell_date: string;
+  quantity: number;
+  sell_price: string;
+  fees: string;
+  realized_pnl: string;
+  avg_cost_at_sell: string;
+  note?: string | null;
+}
+
 export interface Holding {
   ticker: string;
   name?: string | null;
   lots: Lot[];
+  sell_lots?: SellLot[];
   side: "long" | "short";
 }
 
@@ -59,6 +71,7 @@ export interface PositionMetric {
   weight: number;
   sector?: string | null;
   beta?: number | null;
+  realized_pnl?: string;
 }
 
 export interface ConcentrationMetrics {

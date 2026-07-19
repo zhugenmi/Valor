@@ -6,6 +6,7 @@ import type {
   PortfolioAnalytics,
   PortfolioSummary,
   RebalancePlan,
+  SellLot,
   Strategy,
 } from "@/app/portfolio/types";
 import { apiClient } from "@/lib/api-client";
@@ -57,6 +58,25 @@ export const portfolioApi = {
     apiClient.delete<{ deleted: string }>(`${BASE}/${pid}/holdings/${ticker}`),
   addLot: (pid: string, ticker: string, lot: Omit<Lot, "lot_id">) =>
     apiClient.post<Holding>(`${BASE}/${pid}/holdings/${ticker}/lots`, lot),
+  addSell: (
+    pid: string,
+    ticker: string,
+    sell: Omit<SellLot, "sell_id" | "realized_pnl" | "avg_cost_at_sell">,
+  ) => apiClient.post<SellLot>(`${BASE}/${pid}/holdings/${ticker}/sells`, sell),
+  updateLot: (
+    pid: string,
+    ticker: string,
+    lotId: string,
+    patch: Partial<Omit<Lot, "lot_id">>,
+  ) =>
+    apiClient.put<Portfolio>(
+      `${BASE}/${pid}/holdings/${ticker}/lots/${lotId}`,
+      patch,
+    ),
+  deleteLot: (pid: string, ticker: string, lotId: string) =>
+    apiClient.delete<{ deleted: string }>(
+      `${BASE}/${pid}/holdings/${ticker}/lots/${lotId}`,
+    ),
   analytics: (pid: string) =>
     apiClient.get<PortfolioAnalytics>(`${BASE}/${pid}/analytics`),
   createStrategy: (pid: string, req: StrategyRequest) =>
