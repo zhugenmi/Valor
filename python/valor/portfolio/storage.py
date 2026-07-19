@@ -7,7 +7,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from valor.portfolio.models import Holding, Portfolio, Strategy
+from valor.portfolio.models import Holding, Lot, Portfolio, Strategy
 
 DATA_DIR: Path = Path(__file__).resolve().parents[2] / "data" / "portfolios"
 _data_dir: Path = DATA_DIR
@@ -36,6 +36,10 @@ def gen_strategy_id() -> str:
 
 def gen_lot_id() -> str:
     return f"lot_{uuid.uuid4().hex[:8]}"
+
+
+def gen_sell_id() -> str:
+    return f"sell_{uuid.uuid4().hex[:8]}"
 
 
 class PortfolioNotFound(Exception):
@@ -134,6 +138,38 @@ def _find_holding_index(portfolio: Portfolio, ticker: str) -> int:
         if h.ticker == ticker:
             return i
     return -1
+
+
+def deduct_lots_weighted(
+    lots: list[Lot], quantity_to_sell: int
+) -> list[tuple[Lot, int]]:
+    if quantity_to_sell <= 0:
+        raise ValueError("sell quantity must be positive")
+    total = sum(lot.quantity for lot in lots)
+    if quantity_to_sell > total:
+        raise ValueError(
+            f"sell quantity exceeds position: requested={quantity_to_sell}, available={total}"
+        )
+    quotas = [
+        (lot, quantity_to_sell * lot.quantity / total) for lot in lots
+    ]
+    int_alloc = [(lot, int(q)) for lot, q in quotas]
+    allocated = sum(d for _, d in int_alloc)
+    remainder = quantity_to_sell - allocated
+    remainders = sorted(
+        range(len(quotas)),
+        key=lambda i: quotas[i][1] - int(quotas[i][1]),
+        reverse=True,
+    )
+    for i in remainders[:remainder]:
+        lot, d = int_alloc[i]
+        int_alloc[i] = (lot, d + 1)
+    result: list[tuple[Lot, int]] = []
+    for lot, d in int_alloc:
+        if d > 0:
+            lot.quantity -= d
+            result.append((lot, d))
+    return result
 
 
 def add_holding(portfolio_id: str, holding: Holding) -> Portfolio:
