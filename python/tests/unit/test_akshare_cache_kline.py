@@ -228,3 +228,41 @@ def test_get_price_history_df_returns_cached_when_both_sources_fail(temp_cache):
     # Should still return the cached row, not empty
     assert not df.empty
     assert pd.Timestamp("2026-07-13") in df["date"].dt.normalize().tolist()
+
+
+def test_get_price_history_df_falls_back_when_query_trade_dates_fails(temp_cache):
+    """When query_trade_dates raises BaoStockUnavailable (BaoStock blacklisted),
+    get_price_history_df must still return data via the akshare K-line fallback.
+
+    This reproduces the production blacklist scenario: ensure_login() fails inside
+    query_trade_dates BEFORE the missing-segment loop's try/except can catch it.
+    The fix wraps _expected_trading_days so it falls back to bdate_range.
+    """
+    start_dt = pd.Timestamp("2026-07-13")
+    end_dt = pd.Timestamp("2026-07-17")
+
+    trading_days = list(pd.bdate_range("2026-07-13", "2026-07-17").strftime("%Y-%m-%d"))
+
+    # query_trade_dates raises (simulating BaoStock blacklist);
+    # query_history_k_data_plus also raises (same blacklist);
+    # akshare must fill the gap.
+    with patch("valor.adapters.data.akshare_cache.query_trade_dates",
+               side_effect=BaoStockUnavailable("circuit open")), \
+         patch("valor.adapters.data.akshare_cache.query_history_k_data_plus",
+               side_effect=BaoStockUnavailable("circuit open")), \
+         patch("valor.adapters.data.akshare_cache.ak.stock_zh_a_hist",
+               return_value=_fake_akshare_df_for_range(trading_days)):
+        df = ac_module.get_price_history_df(
+            symbol="000858",
+            start_date=start_dt,
+            end_date=end_dt,
+            adjust="qfq",
+        )
+
+    assert not df.empty
+    # akshare rows should be cached
+    cached = temp_cache.fetch_records(
+        table=ac_module.HISTORY_TABLE,
+        filters={"symbol": "000858", "adjust_flag": "qfq"},
+    )
+    assert len(cached) >= 1
