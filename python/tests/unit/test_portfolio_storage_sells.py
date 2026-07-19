@@ -5,7 +5,7 @@ import pytest
 from valor.portfolio.models import Holding, Lot, Portfolio, SellLot
 from valor.portfolio.storage import (
     DATA_DIR, add_holding, add_sell, deduct_lots_weighted, gen_sell_id,
-    save_portfolio, set_data_dir, HoldingNotFound,
+    save_portfolio, set_data_dir, HoldingNotFound, LotNotFound, update_lot,
 )
 
 
@@ -169,3 +169,59 @@ def test_add_sell_full_position_empties_lots():
     h = updated.holdings[0]
     assert len(h.sell_lots) == 1
     assert h.sell_lots[0].quantity == 100
+
+
+def test_update_lot_partial_fields():
+    _seed_portfolio()
+    _seed_holding("pf_t", "600519", [_lot("l1", 100, "1689.50")])
+    updated = update_lot("pf_t", "600519", "l1", {"cost_price": Decimal("1700.00"), "fees": Decimal("12.50")})
+    lot = updated.holdings[0].lots[0]
+    assert lot.cost_price == Decimal("1700.00")
+    assert lot.fees == Decimal("12.50")
+    assert lot.quantity == 100
+    assert lot.open_date == date(2024, 1, 1)
+
+
+def test_update_lot_quantity_to_zero_removes_lot():
+    _seed_portfolio()
+    _seed_holding("pf_t", "600519", [
+        _lot("l1", 100, "1689.50"),
+        _lot("l2", 50, "1700.00"),
+    ])
+    updated = update_lot("pf_t", "600519", "l1", {"quantity": 0})
+    assert len(updated.holdings[0].lots) == 1
+    assert updated.holdings[0].lots[0].lot_id == "l2"
+
+
+def test_update_lot_quantity_to_zero_deletes_holding_when_no_sell_lots():
+    _seed_portfolio()
+    _seed_holding("pf_t", "600519", [_lot("l1", 100, "1689.50")])
+    updated = update_lot("pf_t", "600519", "l1", {"quantity": 0})
+    assert len(updated.holdings) == 0
+
+
+def test_update_lot_quantity_to_zero_keeps_holding_when_has_sell_lots():
+    _seed_portfolio()
+    _seed_holding("pf_t", "600519", [_lot("l1", 100, "1689.50")])
+    add_sell("pf_t", "600519", SellLot(
+        sell_id="", sell_date=date(2026, 7, 19), quantity=50,
+        sell_price=Decimal("1820.00"), fees=Decimal("5.00"),
+        realized_pnl=Decimal("0"), avg_cost_at_sell=Decimal("0"),
+    ))
+    updated = update_lot("pf_t", "600519", "l1", {"quantity": 0})
+    assert len(updated.holdings) == 1
+    assert len(updated.holdings[0].sell_lots) == 1
+    assert len(updated.holdings[0].lots) == 0
+
+
+def test_update_lot_not_found():
+    _seed_portfolio()
+    _seed_holding("pf_t", "600519", [_lot("l1", 100, "1689.50")])
+    with pytest.raises(LotNotFound):
+        update_lot("pf_t", "600519", "l_missing", {"quantity": 50})
+
+
+def test_update_lot_holding_not_found():
+    _seed_portfolio()
+    with pytest.raises(HoldingNotFound):
+        update_lot("pf_t", "000001", "l1", {"quantity": 50})

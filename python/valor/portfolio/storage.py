@@ -130,6 +130,10 @@ class HoldingNotFound(Exception):
     pass
 
 
+class LotNotFound(Exception):
+    pass
+
+
 class StrategyNotFound(Exception):
     pass
 
@@ -207,6 +211,34 @@ def add_sell(portfolio_id: str, ticker: str, sell_lot: SellLot) -> Portfolio:
     if not sell_lot.sell_id:
         sell_lot.sell_id = gen_sell_id()
     h.sell_lots.append(sell_lot)
+    save_portfolio(p)
+    return p
+
+
+def _cleanup_holding_if_empty(p: Portfolio, idx: int) -> None:
+    h = p.holdings[idx]
+    if not h.lots and not h.sell_lots:
+        p.holdings.pop(idx)
+
+
+def update_lot(
+    portfolio_id: str, ticker: str, lot_id: str, patch: dict
+) -> Portfolio:
+    p = load_portfolio(portfolio_id)
+    idx = _find_holding_index(p, ticker)
+    if idx < 0:
+        raise HoldingNotFound(ticker)
+    h = p.holdings[idx]
+    lot_index = next((i for i, lot in enumerate(h.lots) if lot.lot_id == lot_id), -1)
+    if lot_index < 0:
+        raise LotNotFound(lot_id)
+    lot = h.lots[lot_index]
+    for key, value in patch.items():
+        if hasattr(lot, key) and value is not None:
+            setattr(lot, key, value)
+    if lot.quantity == 0:
+        h.lots.pop(lot_index)
+        _cleanup_holding_if_empty(p, idx)
     save_portfolio(p)
     return p
 
