@@ -118,10 +118,8 @@ def get_financial_metrics(
         }
 
         logger.info("Fetching Sina financial indicators...")
-        current_year = datetime.now().year
         financial_data = get_financial_indicators(
             symbol=symbol,
-            start_year=str(current_year - 1),
             force_refresh=refresh_financial_indicators,
         )
         if cutoff is not None:
