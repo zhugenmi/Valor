@@ -266,3 +266,115 @@ def test_get_price_history_df_falls_back_when_query_trade_dates_fails(temp_cache
         filters={"symbol": "000858", "adjust_flag": "qfq"},
     )
     assert len(cached) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Bug B: _expected_trading_days fallback chain
+# (BaoStock query_trade_dates -> akshare tool_trade_date_hist_sina -> bdate_range)
+# ---------------------------------------------------------------------------
+
+
+def _fake_sina_trade_calendar(extra_dates: list[str] | None = None) -> pd.DataFrame:
+    """Mimic ak.tool_trade_date_hist_sina output: a single trade_date column.
+
+    Includes real trading days for 2026-06 (端午 6/19-6/21 excluded) to verify
+    the fallback correctly excludes holidays.
+    """
+    dates = [
+        "2026-06-15", "2026-06-16", "2026-06-17", "2026-06-18",
+        # 2026-06-19/20/21 端午节 - should be absent
+        "2026-06-22", "2026-06-23", "2026-06-24", "2026-06-25",
+    ]
+    if extra_dates:
+        dates.extend(extra_dates)
+    return pd.DataFrame({"trade_date": sorted(dates)})
+
+
+def test_expected_trading_days_falls_back_to_akshare_calendar():
+    """When BaoStock query_trade_dates fails, akshare tool_trade_date_hist_sina
+    provides the real trading calendar (holidays excluded)."""
+    from datetime import datetime
+
+    start = datetime(2026, 6, 15)
+    end = datetime(2026, 6, 25)
+
+    with patch("valor.adapters.data.akshare_cache.query_trade_dates",
+               side_effect=BaoStockUnavailable("circuit open")), \
+         patch("valor.adapters.data.akshare_cache.ak.tool_trade_date_hist_sina",
+               return_value=_fake_sina_trade_calendar()):
+        days = ac_module._expected_trading_days(start, end)
+
+    # 端午 6/19-6/21 must NOT appear in the result
+    day_strs = [d.strftime("%Y-%m-%d") for d in days]
+    for holiday in ("2026-06-19", "2026-06-20", "2026-06-21"):
+        assert holiday not in day_strs, f"{holiday} should be excluded as 端午 holiday"
+    # Real trading days must be present
+    for trading_day in ("2026-06-15", "2026-06-18", "2026-06-22", "2026-06-25"):
+        assert trading_day in day_strs
+
+
+def test_expected_trading_days_final_fallback_bdate_range():
+    """When both BaoStock and akshare trade calendar fail, fall back to bdate_range
+    (last resort, includes holidays but at least returns something)."""
+    from datetime import datetime
+
+    start = datetime(2026, 6, 15)
+    end = datetime(2026, 6, 25)
+
+    with patch("valor.adapters.data.akshare_cache.query_trade_dates",
+               side_effect=BaoStockUnavailable("circuit open")), \
+         patch("valor.adapters.data.akshare_cache.ak.tool_trade_date_hist_sina",
+               side_effect=RuntimeError("akshare down too")):
+        days = ac_module._expected_trading_days(start, end)
+
+    # bdate_range returns Mon-Fri, so 6/19 (Fri) should be present
+    # (this is the known limitation - bdate_range doesn't know about holidays)
+    day_strs = [d.strftime("%Y-%m-%d") for d in days]
+    assert "2026-06-19" in day_strs  # bdate_range includes it (limitation)
+    assert len(days) > 0
+
+
+def test_get_price_history_df_no_holiday_double_source_warnings(
+    temp_cache, caplog: pytest.LogCaptureFixture
+):
+    """When BaoStock is blacklisted and akshare trade calendar is used as fallback,
+    holiday segments (e.g. 端午 6/19-6/21) must NOT appear in missing_segments
+    and therefore NOT trigger spurious "K线双源均失败" warnings.
+
+    Bug B regression: pd.bdate_range fallback treated holidays as missing
+    trading days, causing akshare to be called for holiday segments (which
+    return empty) and logging false "double-source failure" warnings.
+    """
+    from datetime import datetime
+
+    start_dt = datetime(2026, 6, 15)
+    end_dt = datetime(2026, 6, 25)
+
+    # Real trading days for 2026-06-15..25, excluding 端午 6/19-6/21
+    trading_days = [
+        "2026-06-15", "2026-06-16", "2026-06-17", "2026-06-18",
+        "2026-06-22", "2026-06-23", "2026-06-24", "2026-06-25",
+    ]
+
+    with patch("valor.adapters.data.akshare_cache.query_trade_dates",
+               side_effect=BaoStockUnavailable("circuit open")), \
+         patch("valor.adapters.data.akshare_cache.query_history_k_data_plus",
+               side_effect=BaoStockUnavailable("circuit open")), \
+         patch("valor.adapters.data.akshare_cache.ak.tool_trade_date_hist_sina",
+               return_value=_fake_sina_trade_calendar()), \
+         patch("valor.adapters.data.akshare_cache.ak.stock_zh_a_hist",
+               return_value=_fake_akshare_df_for_range(trading_days)):
+        df = ac_module.get_price_history_df(
+            symbol="000858",
+            start_date=start_dt,
+            end_date=end_dt,
+            adjust="qfq",
+        )
+
+    assert not df.empty
+    # No "双源均失败" warning should appear (no holiday segments were attempted)
+    assert "双源均失败" not in caplog.text, (
+        f"holiday segments should not be attempted; got warnings: {caplog.text}"
+    )
+    # Specifically, 端午 6/19 must not appear in any warning
+    assert "2026-06-19" not in caplog.text

@@ -294,13 +294,29 @@ def _expected_trading_days(start_date: datetime, end_date: datetime) -> Sequence
         start_date, end_date = end_date, start_date
     try:
         df = query_trade_dates(start_date, end_date)
+        if df.empty:
+            raise RuntimeError("query_trade_dates returned empty")
     except Exception as exc:
         logger.warning(
-            "⚠️ query_trade_dates 失败，降级用 bdate_range 估算交易日: %s",
+            "⚠️ query_trade_dates 失败，降级 akshare tool_trade_date_hist_sina: %s",
             exc,
         )
-        return pd.bdate_range(start=start_date, end=end_date)
-    if df.empty:
+        try:
+            trade_cal = _call_with_retry(
+                lambda: ak.tool_trade_date_hist_sina(),
+                "tool_trade_date_hist_sina",
+            )
+            if trade_cal is not None and not trade_cal.empty and "trade_date" in trade_cal.columns:
+                all_dates = pd.to_datetime(trade_cal["trade_date"]).dt.normalize()
+                start_ts = pd.Timestamp(start_date).normalize()
+                end_ts = pd.Timestamp(end_date).normalize()
+                mask = (all_dates >= start_ts) & (all_dates <= end_ts)
+                return all_dates.loc[mask].tolist()
+        except Exception as exc2:
+            logger.warning(
+                "⚠️ akshare tool_trade_date_hist_sina 也失败，最后降级 bdate_range: %s",
+                exc2,
+            )
         return pd.bdate_range(start=start_date, end=end_date)
     df["calendar_date"] = pd.to_datetime(df["calendar_date"])
     trading = df[df["is_trading_day"].astype(int) == 1]["calendar_date"].dt.normalize()
