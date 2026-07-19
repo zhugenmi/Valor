@@ -351,6 +351,94 @@ def _prepare_history_frame(raw_df: pd.DataFrame, symbol: str, adjust: str) -> pd
     return raw_df[columns]
 
 
+# akshare stock_zh_a_hist column name -> internal name
+_AKSHARE_KLINE_COLUMN_MAP = {
+    "日期": "date",
+    "开盘": "open",
+    "收盘": "close",
+    "最高": "high",
+    "最低": "low",
+    "成交量": "volume",
+    "成交额": "amount",
+    "振幅": "amplitude",
+    "涨跌幅": "pctChg",
+    "涨跌额": "change_amount",
+    "换手率": "turn",
+}
+
+
+def _fetch_kline_via_akshare(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    adjust: str,
+) -> pd.DataFrame:
+    """Fetch daily K-line via akshare (East Money) as BaoStock fallback.
+
+    Returns DataFrame with the same schema as _prepare_history_frame so the
+    result can be cached in baostock_history_k and consumed downstream
+    without branching on source.
+    """
+    adjust_norm = (adjust or "").lower()
+    ak_adjust = {"qfq": "qfq", "hfq": "hfq", "": "", "none": ""}.get(adjust_norm, "qfq")
+
+    df = _call_with_retry(
+        lambda: ak.stock_zh_a_hist(
+            symbol=symbol,
+            period="daily",
+            start_date=start_date.replace("-", ""),
+            end_date=end_date.replace("-", ""),
+            adjust=ak_adjust,
+        ),
+        "stock_zh_a_hist",
+    )
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    df = df.rename(columns={k: v for k, v in _AKSHARE_KLINE_COLUMN_MAP.items() if k in df.columns})
+
+    numeric_cols = ["open", "high", "low", "close", "volume", "amount",
+                    "pctChg", "turn", "amplitude", "change_amount"]
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values("date").reset_index(drop=True)
+
+    # akshare doesn't return preclose; derive from prior close for amplitude/change_amount
+    df["preclose"] = df["close"].shift(1)
+    preclose_na = df["preclose"].isna()
+    if preclose_na.any():
+        df.loc[preclose_na, "preclose"] = df.loc[preclose_na, "open"]
+
+    # change_amount: use akshare's value if present, else compute from close-preclose
+    if "change_amount" not in df.columns or df["change_amount"].isna().all():
+        df["change_amount"] = df["close"] - df["preclose"]
+
+    # amplitude: percent, matches _prepare_history_frame ((high-low)/preclose * 100)
+    if "amplitude" not in df.columns or df["amplitude"].isna().all():
+        base = df["preclose"].replace(0, pd.NA)
+        df["amplitude"] = ((df["high"] - df["low"]) / base * 100).fillna(0)
+
+    result = pd.DataFrame({
+        "symbol": symbol,
+        "adjust_flag": adjust or "",
+        "date": df["date"],
+        "open": df.get("open", 0.0),
+        "high": df.get("high", 0.0),
+        "low": df.get("low", 0.0),
+        "close": df.get("close", 0.0),
+        "volume": df.get("volume", 0.0),
+        "amount": df.get("amount", 0.0),
+        "amplitude": df["amplitude"].fillna(0),
+        "pct_change": (df["pctChg"] / 100.0).fillna(0) if "pctChg" in df.columns else 0.0,
+        "change_amount": df["change_amount"].fillna(0),
+        "turnover": (df["turn"] / 100.0).fillna(0) if "turn" in df.columns else 0.0,
+    })
+    return result
+
+
 def _cache_history_rows(df: pd.DataFrame) -> None:
     if df.empty:
         return
