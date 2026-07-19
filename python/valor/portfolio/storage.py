@@ -6,8 +6,9 @@ import os
 import uuid
 from contextlib import contextmanager
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
-from valor.portfolio.models import Holding, Lot, Portfolio, Strategy
+from valor.portfolio.models import Holding, Lot, Portfolio, SellLot, Strategy
 
 DATA_DIR: Path = Path(__file__).resolve().parents[2] / "data" / "portfolios"
 _data_dir: Path = DATA_DIR
@@ -179,6 +180,33 @@ def add_holding(portfolio_id: str, holding: Holding) -> Portfolio:
         p.holdings[idx].lots.extend(holding.lots)
     else:
         p.holdings.append(holding)
+    save_portfolio(p)
+    return p
+
+
+def add_sell(portfolio_id: str, ticker: str, sell_lot: SellLot) -> Portfolio:
+    p = load_portfolio(portfolio_id)
+    idx = _find_holding_index(p, ticker)
+    if idx < 0:
+        raise HoldingNotFound(ticker)
+    h = p.holdings[idx]
+    total_qty = sum(lot.quantity for lot in h.lots)
+    if sell_lot.quantity > total_qty:
+        raise ValueError(
+            f"sell quantity exceeds position: requested={sell_lot.quantity}, available={total_qty}"
+        )
+    total_cost = sum(lot.quantity * lot.cost_price for lot in h.lots)
+    avg_cost = total_cost / Decimal(total_qty) if total_qty else Decimal("0")
+    sell_lot.avg_cost_at_sell = avg_cost
+    sell_lot.realized_pnl = (
+        Decimal(sell_lot.quantity) * (sell_lot.sell_price - avg_cost)
+        - sell_lot.fees
+    )
+    deduct_lots_weighted(h.lots, sell_lot.quantity)
+    h.lots = [lot for lot in h.lots if lot.quantity > 0]
+    if not sell_lot.sell_id:
+        sell_lot.sell_id = gen_sell_id()
+    h.sell_lots.append(sell_lot)
     save_portfolio(p)
     return p
 

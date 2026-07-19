@@ -1,10 +1,11 @@
 """Tests for sell-lot storage operations. License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial."""
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 import pytest
-from valor.portfolio.models import Lot
+from valor.portfolio.models import Holding, Lot, Portfolio, SellLot
 from valor.portfolio.storage import (
-    DATA_DIR, deduct_lots_weighted, gen_sell_id, set_data_dir,
+    DATA_DIR, add_holding, add_sell, deduct_lots_weighted, gen_sell_id,
+    save_portfolio, set_data_dir, HoldingNotFound,
 )
 
 
@@ -80,3 +81,91 @@ def test_deduct_cost_price_unchanged():
     lot = _lot("l1", 100, "1689.50")
     deduct_lots_weighted([lot], 30)
     assert lot.cost_price == Decimal("1689.50")
+
+
+def _seed_portfolio(pid: str = "pf_t") -> Portfolio:
+    p = Portfolio(
+        portfolio_id=pid, name="t",
+        created_at=datetime(2026, 7, 17), updated_at=datetime(2026, 7, 17),
+    )
+    save_portfolio(p)
+    return p
+
+
+def _seed_holding(pid: str, ticker: str, lots: list[Lot], name: str = "贵州茅台") -> None:
+    add_holding(pid, Holding(ticker=ticker, name=name, lots=lots))
+
+
+def test_add_sell_basic():
+    _seed_portfolio()
+    _seed_holding("pf_t", "600519", [_lot("l1", 100, "1689.50")])
+    sell = SellLot(
+        sell_id="", sell_date=date(2026, 7, 19), quantity=30,
+        sell_price=Decimal("1820.00"), fees=Decimal("15.00"),
+        realized_pnl=Decimal("0"), avg_cost_at_sell=Decimal("0"),
+    )
+    updated = add_sell("pf_t", "600519", sell)
+    h = updated.holdings[0]
+    assert len(h.sell_lots) == 1
+    assert h.sell_lots[0].quantity == 30
+    assert h.lots[0].quantity == 70
+    assert h.lots[0].cost_price == Decimal("1689.50")
+    assert h.sell_lots[0].sell_id.startswith("sell_")
+    assert h.sell_lots[0].avg_cost_at_sell == Decimal("1689.50")
+    assert h.sell_lots[0].realized_pnl == Decimal("3900.00")
+
+
+def test_add_sell_multi_lot_weighted_avg():
+    _seed_portfolio()
+    _seed_holding("pf_t", "600519", [
+        _lot("l1", 100, "1689.50"),
+        _lot("l2", 100, "1800.00"),
+    ])
+    sell = SellLot(
+        sell_id="", sell_date=date(2026, 7, 19), quantity=100,
+        sell_price=Decimal("1900.00"), fees=Decimal("20.00"),
+        realized_pnl=Decimal("0"), avg_cost_at_sell=Decimal("0"),
+    )
+    updated = add_sell("pf_t", "600519", sell)
+    s = updated.holdings[0].sell_lots[0]
+    assert s.avg_cost_at_sell == Decimal("1744.75")
+    assert s.realized_pnl == Decimal("15505.00")
+    assert updated.holdings[0].lots[0].quantity == 50
+    assert updated.holdings[0].lots[1].quantity == 50
+
+
+def test_add_sell_exceeds_position_raises():
+    _seed_portfolio()
+    _seed_holding("pf_t", "600519", [_lot("l1", 100, "1689.50")])
+    sell = SellLot(
+        sell_id="", sell_date=date(2026, 7, 19), quantity=150,
+        sell_price=Decimal("1820.00"), fees=Decimal("0"),
+        realized_pnl=Decimal("0"), avg_cost_at_sell=Decimal("0"),
+    )
+    with pytest.raises(ValueError, match="exceeds"):
+        add_sell("pf_t", "600519", sell)
+
+
+def test_add_sell_holding_not_found():
+    _seed_portfolio()
+    sell = SellLot(
+        sell_id="", sell_date=date(2026, 7, 19), quantity=10,
+        sell_price=Decimal("1820.00"), fees=Decimal("0"),
+        realized_pnl=Decimal("0"), avg_cost_at_sell=Decimal("0"),
+    )
+    with pytest.raises(HoldingNotFound):
+        add_sell("pf_t", "000001", sell)
+
+
+def test_add_sell_full_position_empties_lots():
+    _seed_portfolio()
+    _seed_holding("pf_t", "600519", [_lot("l1", 100, "1689.50")])
+    sell = SellLot(
+        sell_id="", sell_date=date(2026, 7, 19), quantity=100,
+        sell_price=Decimal("1820.00"), fees=Decimal("15.00"),
+        realized_pnl=Decimal("0"), avg_cost_at_sell=Decimal("0"),
+    )
+    updated = add_sell("pf_t", "600519", sell)
+    h = updated.holdings[0]
+    assert len(h.sell_lots) == 1
+    assert h.sell_lots[0].quantity == 100
