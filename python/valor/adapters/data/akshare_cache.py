@@ -217,30 +217,51 @@ def get_financial_indicators(
 
 
 def get_financial_report(
-    symbol: str, report_type: str, ttl_seconds: int = 7 * 24 * 3600, force_refresh: bool = False
+    symbol: str,
+    report_type: str,
+    ttl_seconds: int = 7 * 24 * 3600,  # 保留兼容性，未使用
+    force_refresh: bool = False,
 ) -> pd.DataFrame:
     # 财务报表缓存改为"无 TTL 常驻"；ttl_seconds 参数仅保留兼容性
     if force_refresh:
         logger.info("🔄 强制刷新财务报表缓存: %s %s", symbol, report_type)
 
-    if not force_refresh:
-        cached = cache.fetch_records(
-            table="stock_financial_report_sina",
-            filters={COL_CODE: symbol, COL_REPORT_TYPE: report_type},
-        )
-        if cached:
-            _log_cache_hit(f"stock_financial_report_sina[{report_type}]", symbol, len(cached))
-            return _records_to_df(cached)
+    cached = [] if force_refresh else cache.fetch_records(
+        table="stock_financial_report_sina",
+        filters={COL_CODE: symbol, COL_REPORT_TYPE: report_type},
+        order_by=f'"{COL_REPORT_DATE}" DESC',
+    )
+
+    cached_df = _records_to_df(cached) if cached else pd.DataFrame()
+    latest_report_date = None
+    if not cached_df.empty and COL_REPORT_DATE in cached_df.columns:
+        try:
+            latest_report_date = pd.to_datetime(
+                cached_df[COL_REPORT_DATE].max()
+            ).date()
+        except Exception:
+            latest_report_date = None
+
+    from valor.adapters.data.report_calendar import should_refresh_reports
+
+    need_fetch = force_refresh or should_refresh_reports(latest_report_date)
+
+    if not need_fetch:
+        _log_cache_hit(f"stock_financial_report_sina[{report_type}]", symbol, len(cached))
+        return cached_df
 
     exchange_symbol = _resolve_exchange_symbol(symbol)
     df = _call_with_retry(
         lambda: ak.stock_financial_report_sina(stock=exchange_symbol, symbol=report_type),
         "stock_financial_report_sina",
     )
-    if df is None:
-        return pd.DataFrame()
-
     if df is None or df.empty:
+        if cached:
+            logger.warning(
+                "⚠️ 远程拉取财报报表失败，降级返回缓存: %s %s (缓存行数=%d)",
+                symbol, report_type, len(cached),
+            )
+            return cached_df
         return pd.DataFrame()
 
     if COL_REPORT_DATE in df.columns:
@@ -252,9 +273,15 @@ def get_financial_report(
         df.to_dict("records"),
         key_columns=[COL_CODE, COL_REPORT_TYPE, COL_REPORT_DATE],
     )
-    _log_cache_upsert(
-        f"stock_financial_report_sina[{report_type}]", symbol, len(df)
-    )
+    _log_cache_upsert(f"stock_financial_report_sina[{report_type}]", symbol, len(df))
+
+    if cached:
+        combined = pd.concat([cached_df, df], ignore_index=True)
+        combined = combined.drop_duplicates(
+            subset=[COL_CODE, COL_REPORT_TYPE, COL_REPORT_DATE], keep="last"
+        )
+        combined[COL_REPORT_DATE] = pd.to_datetime(combined[COL_REPORT_DATE])
+        return combined.sort_values(COL_REPORT_DATE, ascending=False)
     return df
 
 

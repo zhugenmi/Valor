@@ -10,7 +10,10 @@ from valor.adapters.data import akshare_cache
 from valor.adapters.data.akshare_cache import (
     COL_CODE,
     COL_DATE,
+    COL_REPORT_DATE,
+    COL_REPORT_TYPE,
     get_financial_indicators,
+    get_financial_report,
 )
 
 
@@ -130,3 +133,101 @@ def test_indicators_remote_failure_returns_cached(
     df = get_financial_indicators(symbol="600519")
     assert len(df) == 1
     assert df.iloc[0][COL_CODE] == "600519"
+
+
+def _make_report_df(symbol: str, report_type: str, report_dates: list[str]) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            COL_CODE: [symbol] * len(report_dates),
+            COL_REPORT_TYPE: [report_type] * len(report_dates),
+            COL_REPORT_DATE: report_dates,
+            "净利润": [1.0] * len(report_dates),
+        }
+    )
+
+
+def test_report_first_fetch(isolated_cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """空缓存首次拉取。"""
+    def fake_remote(stock: str, symbol: str) -> pd.DataFrame:
+        return _make_report_df("600519", symbol, ["2025-12-31", "2026-03-31"])
+
+    monkeypatch.setattr(akshare_cache.ak, "stock_financial_report_sina", fake_remote)
+    monkeypatch.setattr(akshare_cache, "_call_with_retry", lambda f, label: f())
+
+    df = get_financial_report(symbol="600519", report_type="利润表")
+    assert len(df) == 2
+    assert COL_REPORT_DATE in df.columns
+
+
+def test_report_cache_hit_no_refresh(
+    isolated_cache: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """有缓存且无新季度应披露 -> 不调远程。"""
+    from valor.adapters.data.akshare_cache import cache as real_cache
+
+    # 预置缓存：最新 2026 中报(6/30)，今天 7/19，Q3 截止 10/31 还没到
+    cache_df = _make_report_df("600519", "利润表", ["2026-03-31", "2026-06-30"])
+    real_cache.upsert_records(
+        "stock_financial_report_sina",
+        cache_df.to_dict("records"),
+        key_columns=[COL_CODE, COL_REPORT_TYPE, COL_REPORT_DATE],
+    )
+
+    call_count = 0
+
+    def fake_remote(stock: str, symbol: str) -> pd.DataFrame:
+        nonlocal call_count
+        call_count += 1
+        return pd.DataFrame()
+
+    monkeypatch.setattr(akshare_cache.ak, "stock_financial_report_sina", fake_remote)
+    monkeypatch.setattr(akshare_cache, "_call_with_retry", lambda f, label: f())
+
+    df = get_financial_report(symbol="600519", report_type="利润表")
+    assert call_count == 0
+    assert len(df) == 2
+
+
+def test_report_refresh_when_new_period_due(
+    isolated_cache: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """有缓存但有新季度应披露 -> 调远程 + 合并去重。"""
+    from valor.adapters.data.akshare_cache import cache as real_cache
+
+    # 预置缓存：最新 2025 年报(12/31)，今天 7/19 已过 Q1 截止(4/30)
+    cache_df = _make_report_df("600519", "利润表", ["2025-12-31"])
+    real_cache.upsert_records(
+        "stock_financial_report_sina",
+        cache_df.to_dict("records"),
+        key_columns=[COL_CODE, COL_REPORT_TYPE, COL_REPORT_DATE],
+    )
+
+    # 远程返回包含旧的 2026-03-31 + 新的 2026-06-30（修订场景）
+    def fake_remote(stock: str, symbol: str) -> pd.DataFrame:
+        return _make_report_df("600519", symbol, ["2026-03-31", "2026-06-30"])
+
+    monkeypatch.setattr(akshare_cache.ak, "stock_financial_report_sina", fake_remote)
+    monkeypatch.setattr(akshare_cache, "_call_with_retry", lambda f, label: f())
+
+    df = get_financial_report(symbol="600519", report_type="利润表")
+    # 合并去重后应包含 3 个不同报告日
+    assert len(df) == 3
+
+
+def test_report_remote_failure_returns_cached(
+    isolated_cache: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """远程失败 + 有缓存 -> 降级返回缓存。"""
+    from valor.adapters.data.akshare_cache import cache as real_cache
+
+    cache_df = _make_report_df("600519", "利润表", ["2026-03-31"])
+    real_cache.upsert_records(
+        "stock_financial_report_sina",
+        cache_df.to_dict("records"),
+        key_columns=[COL_CODE, COL_REPORT_TYPE, COL_REPORT_DATE],
+    )
+
+    monkeypatch.setattr(akshare_cache, "_call_with_retry", lambda f, label: None)
+
+    df = get_financial_report(symbol="600519", report_type="利润表")
+    assert len(df) == 1
