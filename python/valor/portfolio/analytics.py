@@ -33,6 +33,7 @@ class PositionMetric(BaseModel):
     weight: float
     sector: str | None = None
     beta: float | None = None
+    realized_pnl: Decimal = Decimal("0")
 
 
 class ConcentrationMetrics(BaseModel):

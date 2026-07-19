@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 import pytest
 from valor.portfolio.models import (
-    Lot, Holding, Strategy, Portfolio, RebalanceAction, RebalancePlan,
+    Lot, Holding, SellLot, Strategy, Portfolio, RebalanceAction, RebalancePlan,
 )
 
 
@@ -52,3 +52,51 @@ def test_decimal_serialization():
                   created_at=datetime.now(), updated_at=datetime.now())
     js = p.model_dump_json()
     assert "50000.00" in js
+
+
+# --- SellLot ---
+
+
+def test_sell_lot_creation():
+    s = SellLot(
+        sell_id="sell_abc",
+        sell_date=date(2026, 7, 19),
+        quantity=100,
+        sell_price=Decimal("1820.00"),
+        fees=Decimal("15.50"),
+        realized_pnl=Decimal("12984.50"),
+        avg_cost_at_sell=Decimal("1689.50"),
+    )
+    assert s.sell_id == "sell_abc"
+    assert s.quantity == 100
+    assert s.realized_pnl == Decimal("12984.50")
+
+
+def test_holding_has_sell_lots_default_empty():
+    h = Holding(ticker="600519", lots=[])
+    assert h.sell_lots == []
+
+
+def test_holding_with_sell_lots():
+    h = Holding(
+        ticker="600519",
+        lots=[Lot(lot_id="l1", open_date=date(2024, 1, 1), quantity=100, cost_price=Decimal("1689.50"))],
+        sell_lots=[SellLot(
+            sell_id="s1", sell_date=date(2026, 7, 19), quantity=50,
+            sell_price=Decimal("1820.00"), fees=Decimal("5.00"),
+            realized_pnl=Decimal("6500.00"), avg_cost_at_sell=Decimal("1689.50"),
+        )],
+    )
+    assert len(h.sell_lots) == 1
+    assert h.sell_lots[0].sell_id == "s1"
+
+
+def test_position_metric_has_realized_pnl_default_zero():
+    from valor.portfolio.analytics import PositionMetric
+    pm = PositionMetric(
+        ticker="600519", name="贵州茅台", quantity=100,
+        cost_price=Decimal("1689.50"), current_price=Decimal("1800.00"),
+        market_value=Decimal("180000.00"), cost_value=Decimal("168950.00"),
+        unrealized_pnl=Decimal("11050.00"), unrealized_pnl_pct=0.065, weight=1.0,
+    )
+    assert pm.realized_pnl == Decimal("0")

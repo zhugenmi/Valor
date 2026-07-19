@@ -15,10 +15,24 @@ class Lot(BaseModel):
     note: str | None = None
 
 
+class SellLot(BaseModel):
+    """单笔卖出记录（用于已实现盈亏追踪）"""
+    sell_id: str
+    sell_date: date
+    quantity: int
+    sell_price: Decimal
+    fees: Decimal = Decimal("0")
+    realized_pnl: Decimal
+    avg_cost_at_sell: Decimal
+    note: str | None = None
+
+
 class Holding(BaseModel):
+    """单一股票持仓 = 多个 Lot 的聚合"""
     ticker: str
     name: str | None = None
     lots: list[Lot] = []
+    sell_lots: list[SellLot] = []
     side: Literal["long", "short"] = "long"
 
 
