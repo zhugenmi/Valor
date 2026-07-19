@@ -460,6 +460,59 @@ def test_rebalance_portfolio_not_found(app_client, mock_data_router):
     assert resp.status_code == 404
 
 
+# --- Lot CRUD ---
+
+
+def test_update_lot_success(app_client):
+    pid = _seed(app_client)
+    _seed_holding(app_client, pid)
+    p = app_client.get(f"/api/v1/portfolios/{pid}").json()["data"]
+    lot_id = p["holdings"][0]["lots"][0]["lot_id"]
+    resp = app_client.put(
+        f"/api/v1/portfolios/{pid}/holdings/600519/lots/{lot_id}",
+        json={"cost_price": "1700.00", "fees": "12.50"},
+    )
+    assert resp.status_code == 200
+    updated_p = resp.json()["data"]
+    updated_h = next(x for x in updated_p["holdings"] if x["ticker"] == "600519")
+    lot = next(x for x in updated_h["lots"] if x["lot_id"] == lot_id)
+    assert lot["cost_price"] == "1700.00"
+    assert lot["fees"] == "12.50"
+    assert lot["quantity"] == 100
+
+
+def test_update_lot_quantity_to_zero_removes(app_client):
+    pid = _seed(app_client)
+    _seed_holding(app_client, pid, qty=100)
+    p = app_client.get(f"/api/v1/portfolios/{pid}").json()["data"]
+    lot_id = p["holdings"][0]["lots"][0]["lot_id"]
+    resp = app_client.put(
+        f"/api/v1/portfolios/{pid}/holdings/600519/lots/{lot_id}",
+        json={"quantity": 0},
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()["data"]["holdings"]) == 0
+
+
+def test_update_lot_not_found_404(app_client):
+    pid = _seed(app_client)
+    _seed_holding(app_client, pid)
+    resp = app_client.put(
+        f"/api/v1/portfolios/{pid}/holdings/600519/lots/lot_missing",
+        json={"quantity": 50},
+    )
+    assert resp.status_code == 404
+
+
+def test_update_lot_holding_not_found_404(app_client):
+    pid = _seed(app_client)
+    resp = app_client.put(
+        f"/api/v1/portfolios/{pid}/holdings/000001/lots/lot_x",
+        json={"quantity": 50},
+    )
+    assert resp.status_code == 404
+
+
 # --- Sell Lots ---
 
 

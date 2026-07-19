@@ -236,6 +236,28 @@ async def add_sell(pid: str, ticker: str, body: SellLotInput):
     return ok(h.sell_lots[-1].model_dump(mode="json"))
 
 
+class LotPatch(BaseModel):
+    open_date: date | None = None
+    quantity: int | None = None
+    cost_price: Decimal | None = None
+    fees: Decimal | None = None
+    note: str | None = None
+
+
+@router.put("/{pid}/holdings/{ticker}/lots/{lot_id}")
+async def update_lot(pid: str, ticker: str, lot_id: str, body: LotPatch):
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    try:
+        updated = storage.update_lot(pid, ticker, lot_id, patch)
+    except storage.PortfolioNotFound:
+        raise HTTPException(status_code=404, detail="portfolio not found")
+    except storage.HoldingNotFound:
+        raise HTTPException(status_code=404, detail="holding not found")
+    except storage.LotNotFound:
+        raise HTTPException(status_code=404, detail="lot not found")
+    return ok(updated.model_dump(mode="json"))
+
+
 # --- Analytics ---
 
 
