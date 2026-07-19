@@ -121,7 +121,7 @@ def test_indicators_remote_failure_returns_cached(
     """远程失败 + 有缓存 -> 降级返回缓存 + 警告日志。"""
     from valor.adapters.data.akshare_cache import cache as real_cache
 
-    cache_df = _make_indicator_df("600519", ["2026-03-31"])
+    cache_df = _make_indicator_df("600519", ["2025-12-31"])
     real_cache.upsert_records(
         "stock_financial_analysis_indicator",
         cache_df.to_dict("records"),
@@ -133,6 +133,7 @@ def test_indicators_remote_failure_returns_cached(
     df = get_financial_indicators(symbol="600519")
     assert len(df) == 1
     assert df.iloc[0][COL_CODE] == "600519"
+    assert "降级" in caplog.text
 
 
 def _make_report_df(symbol: str, report_type: str, report_dates: list[str]) -> pd.DataFrame:
