@@ -8,7 +8,6 @@ from __future__ import annotations
 from typing import Optional
 
 import akshare as ak
-import pandas as pd
 from loguru import logger
 
 from valor.adapters.data.akshare_cache import COL_CODE, COL_NAME, cache

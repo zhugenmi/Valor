@@ -87,7 +87,6 @@ def test_get_stock_name_remote_failure_returns_none(
 
 def test_get_stock_name_empty_symbol(isolated_cache: None) -> None:
     """空 symbol -> 远程拉不到对应行 -> 返回 None（但不抛异常）。"""
-    from valor.tools.stock_basic import get_stock_name
 
     # 不调远程也行：直接预置缓存
     from valor.adapters.data.akshare_cache import cache, COL_CODE, COL_NAME
