@@ -1,11 +1,11 @@
 """Portfolio REST routes. License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial."""
 from __future__ import annotations
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
 from pydantic import BaseModel
 from valor.portfolio import storage
-from valor.portfolio.models import Portfolio, Holding, Lot, Strategy
+from valor.portfolio.models import Portfolio, Holding, Lot, SellLot, Strategy
 from valor.portfolio.loader import parse_generic_csv, parse_eastmoney_csv, detect_format
 from valor.portfolio.analytics import compute_analytics
 from valor.portfolio.adapters import DataRouterPriceLookup, DataRouterHistoricalLookup, DataRouterSectorLookup
@@ -197,6 +197,43 @@ async def add_lot(pid: str, ticker: str, body: Lot):
             storage.save_portfolio(p)
             return ok(h.model_dump(mode="json"))
     raise HTTPException(status_code=404, detail="holding not found")
+
+
+class SellLotInput(BaseModel):
+    sell_date: date
+    quantity: int
+    sell_price: Decimal
+    fees: Decimal = Decimal("0")
+    note: str | None = None
+
+
+@router.post("/{pid}/holdings/{ticker}/sells")
+async def add_sell(pid: str, ticker: str, body: SellLotInput):
+    try:
+        p = storage.load_portfolio(pid)
+    except storage.PortfolioNotFound:
+        raise HTTPException(status_code=404, detail="portfolio not found")
+    holding = next((h for h in p.holdings if h.ticker == ticker), None)
+    if holding is None:
+        raise HTTPException(status_code=404, detail="holding not found")
+    sell = SellLot(
+        sell_id="",
+        sell_date=body.sell_date,
+        quantity=body.quantity,
+        sell_price=body.sell_price,
+        fees=body.fees,
+        note=body.note,
+        realized_pnl=Decimal("0"),
+        avg_cost_at_sell=Decimal("0"),
+    )
+    try:
+        updated = storage.add_sell(pid, ticker, sell)
+    except storage.HoldingNotFound:
+        raise HTTPException(status_code=404, detail="holding not found")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    h = next(x for x in updated.holdings if x.ticker == ticker)
+    return ok(h.sell_lots[-1].model_dump(mode="json"))
 
 
 # --- Analytics ---

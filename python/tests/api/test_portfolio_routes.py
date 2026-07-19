@@ -458,3 +458,73 @@ def test_rebalance_portfolio_not_found(app_client, mock_data_router):
     resp = app_client.post("/api/v1/portfolios/pf_missing/rebalance", json={
         "strategy_id": "strat_x", "params": {}})
     assert resp.status_code == 404
+
+
+# --- Sell Lots ---
+
+
+def _seed_holding(app_client, pid, ticker="600519", qty=100, cost="1689.50"):
+    """Helper: add a holding with one lot via API."""
+    app_client.post(
+        f"/api/v1/portfolios/{pid}/holdings",
+        json={
+            "ticker": ticker,
+            "name": "贵州茅台",
+            "side": "long",
+            "lots": [{
+                "lot_id": "",
+                "open_date": "2024-01-01",
+                "quantity": qty,
+                "cost_price": cost,
+                "fees": "0",
+            }],
+        },
+    )
+
+
+def test_add_sell_success(app_client):
+    pid = _seed(app_client)
+    _seed_holding(app_client, pid)
+    resp = app_client.post(
+        f"/api/v1/portfolios/{pid}/holdings/600519/sells",
+        json={
+            "sell_date": "2026-07-19",
+            "quantity": 30,
+            "sell_price": "1820.00",
+            "fees": "15.00",
+            "note": "止盈",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["sell_id"].startswith("sell_")
+    assert data["quantity"] == 30
+    assert data["avg_cost_at_sell"] == "1689.50"
+
+
+def test_add_sell_exceeds_position_400(app_client):
+    pid = _seed(app_client)
+    _seed_holding(app_client, pid, qty=100)
+    resp = app_client.post(
+        f"/api/v1/portfolios/{pid}/holdings/600519/sells",
+        json={"sell_date": "2026-07-19", "quantity": 200, "sell_price": "1820.00", "fees": "0"},
+    )
+    assert resp.status_code == 400
+    assert "exceeds" in resp.json()["detail"]
+
+
+def test_add_sell_holding_not_found_404(app_client):
+    pid = _seed(app_client)
+    resp = app_client.post(
+        f"/api/v1/portfolios/{pid}/holdings/000001/sells",
+        json={"sell_date": "2026-07-19", "quantity": 10, "sell_price": "10.00", "fees": "0"},
+    )
+    assert resp.status_code == 404
+
+
+def test_add_sell_portfolio_not_found_404(app_client):
+    resp = app_client.post(
+        "/api/v1/portfolios/pf_missing/holdings/600519/sells",
+        json={"sell_date": "2026-07-19", "quantity": 10, "sell_price": "10.00", "fees": "0"},
+    )
+    assert resp.status_code == 404
