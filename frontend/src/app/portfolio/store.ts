@@ -77,6 +77,7 @@ export const usePortfolioStore = create<PortfolioState>((set) => ({
           name: p.name,
           benchmark: p.benchmark,
           cash: p.cash,
+          num_holdings: 0,
           updated_at: p.updated_at,
         },
       ],

@@ -55,6 +55,10 @@ export interface PortfolioSummary {
   name: string;
   benchmark: string;
   cash: string;
+  num_holdings?: number;
+  total_market_value?: string;
+  total_unrealized_pnl?: string;
+  total_unrealized_pnl_pct?: number;
   updated_at: string;
 }
 

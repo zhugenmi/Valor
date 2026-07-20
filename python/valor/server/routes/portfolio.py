@@ -1,5 +1,6 @@
 """Portfolio REST routes. License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial."""
 from __future__ import annotations
+import asyncio
 from datetime import date, datetime
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
@@ -50,11 +51,36 @@ class RebalanceRequest(BaseModel):
 
 
 @router.get("")
-async def list_portfolios():
+async def list_portfolios(router_obj: DataRouter = Depends(get_data_router)):
+    portfolios = storage.list_portfolios()
+    price_lookup = DataRouterPriceLookup(router_obj)
+
+    async def _analytics_for(p: Portfolio) -> dict:
+        if not p.holdings:
+            return {}
+        try:
+            result = await compute_analytics(p, price_lookup)
+            return {
+                "total_market_value": str(result.total_market_value),
+                "total_unrealized_pnl": str(result.total_unrealized_pnl),
+                "total_unrealized_pnl_pct": result.total_unrealized_pnl_pct,
+            }
+        except Exception:
+            return {}
+
+    summaries = await asyncio.gather(*(_analytics_for(p) for p in portfolios))
     return ok([
-        {"portfolio_id": p.portfolio_id, "name": p.name, "benchmark": p.benchmark,
-         "cash": str(p.cash), "updated_at": p.updated_at.isoformat(), "created_at": p.created_at.isoformat()}
-        for p in storage.list_portfolios()
+        {
+            "portfolio_id": p.portfolio_id,
+            "name": p.name,
+            "benchmark": p.benchmark,
+            "cash": str(p.cash),
+            "num_holdings": len(p.holdings),
+            "updated_at": p.updated_at.isoformat(),
+            "created_at": p.created_at.isoformat(),
+            **extra,
+        }
+        for p, extra in zip(portfolios, summaries)
     ])
 
 
@@ -157,6 +183,11 @@ async def add_holding(pid: str, body: Holding):
         updated = storage.add_holding(pid, body)
     except storage.PortfolioNotFound:
         raise HTTPException(status_code=404, detail="portfolio not found")
+    # Deduct cash for buy
+    total_cost = sum(lot.cost_price * Decimal(lot.quantity) + lot.fees for lot in body.lots)
+    if total_cost > 0:
+        updated.cash -= total_cost
+        storage.save_portfolio(updated)
     target = next((h for h in updated.holdings if h.ticker == body.ticker), None)
     if target is None:
         raise HTTPException(status_code=500, detail="holding not found after add")
@@ -193,6 +224,11 @@ async def add_lot(pid: str, ticker: str, body: Lot):
         raise HTTPException(status_code=404, detail="portfolio not found")
     except storage.HoldingNotFound:
         raise HTTPException(status_code=404, detail="holding not found")
+    # Deduct cash for buy
+    total_cost = body.cost_price * Decimal(body.quantity) + body.fees
+    if total_cost > 0:
+        updated.cash -= total_cost
+        storage.save_portfolio(updated)
     h = next(x for x in updated.holdings if x.ticker == ticker)
     return ok(h.model_dump(mode="json"))
 
@@ -230,6 +266,11 @@ async def add_sell(pid: str, ticker: str, body: SellLotInput):
         raise HTTPException(status_code=404, detail="holding not found")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    # Add cash proceeds from sell
+    proceeds = body.sell_price * Decimal(body.quantity) - body.fees
+    if proceeds > 0:
+        updated.cash += proceeds
+        storage.save_portfolio(updated)
     h = next(x for x in updated.holdings if x.ticker == ticker)
     return ok(h.sell_lots[-1].model_dump(mode="json"))
 

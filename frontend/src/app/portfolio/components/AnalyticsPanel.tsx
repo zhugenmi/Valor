@@ -43,7 +43,7 @@ export default function AnalyticsPanel({ pid }: { pid: string }) {
   if (loading) return <div className="p-4">计算中...</div>;
   if (!analytics) return <div className="p-4">暂无数据</div>;
 
-  const sectorData = Object.entries(analytics.sector_exposure).map(
+  const sectorData = Object.entries(analytics.sector_exposure ?? {}).map(
     ([name, value]) => ({ name, value: value * 100 }),
   );
 

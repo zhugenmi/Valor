@@ -1,4 +1,7 @@
 import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   ChevronDown,
   ChevronRight,
   Minus,
@@ -7,7 +10,7 @@ import {
   Stethoscope,
   Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { portfolioApi } from "@/api/portfolio";
 import { Button } from "@/components/ui/button";
@@ -20,8 +23,95 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatMoney, formatPercent, formatPnlClass } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { usePortfolioStore } from "../store";
-import type { Holding, Lot, SellLot } from "../types";
+import type { Holding, Lot, PositionMetric, SellLot } from "../types";
+
+type SortField =
+  | "name"
+  | "quantity"
+  | "cost_price"
+  | "current_price"
+  | "unrealized_pnl"
+  | "weight"
+  | null;
+
+interface SortState {
+  field: SortField;
+  dir: "asc" | "desc";
+}
+
+interface ColumnDef {
+  field: SortField;
+  label: string;
+  className?: string;
+  requiresAnalytics?: boolean;
+  getValue?: (h: Holding, m: PositionMetric | undefined) => string | number;
+}
+
+const COLUMNS: ColumnDef[] = [
+  { field: null, label: "", className: "w-8" },
+  { field: null, label: "代码", className: "", getValue: () => "" },
+  {
+    field: "name",
+    label: "名称",
+    getValue: (h) => h.name ?? "",
+  },
+  {
+    field: "quantity",
+    label: "持仓量",
+    className: "text-right",
+    getValue: (h) => h.lots.reduce((s, l) => s + l.quantity, 0),
+  },
+  {
+    field: "cost_price",
+    label: "买入均价",
+    className: "text-right",
+    requiresAnalytics: true,
+    getValue: (_, m) => (m ? Number(m.cost_price) : 0),
+  },
+  {
+    field: "current_price",
+    label: "现价",
+    className: "text-right",
+    requiresAnalytics: true,
+    getValue: (_, m) => (m ? Number(m.current_price) : 0),
+  },
+  {
+    field: "unrealized_pnl",
+    label: "浮动盈亏",
+    className: "text-right",
+    requiresAnalytics: true,
+    getValue: (_, m) => (m ? Number(m.unrealized_pnl) : 0),
+  },
+  {
+    field: "weight",
+    label: "个股仓位",
+    className: "text-right",
+    requiresAnalytics: true,
+    getValue: (_, m) => (m ? m.weight : 0),
+  },
+  { field: null, label: "操作", className: "text-right" },
+];
+
+function SortIcon({
+  field,
+  current,
+}: {
+  field: SortField;
+  current: SortState;
+}) {
+  if (current.field !== field) {
+    return (
+      <ArrowUpDown className="ml-1 inline h-3 w-3 text-muted-foreground/40" />
+    );
+  }
+  return current.dir === "asc" ? (
+    <ArrowUp className="ml-1 inline h-3 w-3" />
+  ) : (
+    <ArrowDown className="ml-1 inline h-3 w-3" />
+  );
+}
 
 interface Props {
   pid: string;
@@ -40,6 +130,7 @@ export default function HoldingsTable({
 }: Props) {
   const { analytics, fetchDetail } = usePortfolioStore();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [sort, setSort] = useState<SortState>({ field: null, dir: "desc" });
 
   function toggle(ticker: string) {
     setExpanded((prev) => {
@@ -50,9 +141,38 @@ export default function HoldingsTable({
     });
   }
 
+  function cycleSort(field: SortField) {
+    setSort((prev) => {
+      if (prev.field !== field) return { field, dir: "asc" };
+      if (prev.dir === "asc") return { field, dir: "desc" };
+      return { field: null, dir: "desc" };
+    });
+  }
+
   function metricFor(ticker: string) {
     return analytics?.positions.find((p) => p.ticker === ticker);
   }
+
+  const sortedHoldings = useMemo(() => {
+    if (!sort.field) return holdings;
+    const col = COLUMNS.find((c) => c.field === sort.field);
+    if (!col || !col.getValue) return holdings;
+    return [...holdings].sort((a, b) => {
+      const ma = col.requiresAnalytics
+        ? analytics?.positions.find((p) => p.ticker === a.ticker)
+        : undefined;
+      const mb = col.requiresAnalytics
+        ? analytics?.positions.find((p) => p.ticker === b.ticker)
+        : undefined;
+      const va = col.getValue!(a, ma);
+      const vb = col.getValue!(b, mb);
+      const cmp =
+        typeof va === "number" && typeof vb === "number"
+          ? va - vb
+          : String(va).localeCompare(String(vb));
+      return sort.dir === "asc" ? cmp : -cmp;
+    });
+  }, [holdings, sort, analytics]);
 
   async function removeHolding(ticker: string) {
     if (!confirm(`删除持仓 ${ticker}？此操作会移除所有 Lot 与 SellLot 记录。`))
@@ -71,25 +191,36 @@ export default function HoldingsTable({
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead className="w-8"></TableHead>
-          <TableHead>代码</TableHead>
-          <TableHead>名称</TableHead>
-          <TableHead className="text-right">持仓量</TableHead>
-          <TableHead className="text-right">买入均价</TableHead>
-          <TableHead className="text-right">现价</TableHead>
-          <TableHead className="text-right">浮动盈亏</TableHead>
-          <TableHead className="text-right">个股仓位</TableHead>
-          <TableHead className="text-right">操作</TableHead>
+          {COLUMNS.map((col) =>
+            col.field ? (
+              <TableHead
+                key={col.field}
+                className={cn(
+                  "cursor-pointer select-none hover:bg-muted/50",
+                  col.className,
+                  sort.field === col.field && "font-semibold",
+                )}
+                onClick={() => cycleSort(col.field)}
+              >
+                {col.label}
+                <SortIcon field={col.field} current={sort} />
+              </TableHead>
+            ) : (
+              <TableHead key={`col-${col.label}`} className={col.className}>
+                {col.label}
+              </TableHead>
+            ),
+          )}
         </TableRow>
       </TableHeader>
       <TableBody>
-        {holdings.map((h) => {
+        {sortedHoldings.map((h) => {
           const m = metricFor(h.ticker);
           const qty = h.lots.reduce((s, l) => s + l.quantity, 0);
           const expandedRow = expanded.has(h.ticker);
           return (
-            <>
-              <TableRow key={h.ticker}>
+            <Fragment key={h.ticker}>
+              <TableRow>
                 <TableCell
                   onClick={() => toggle(h.ticker)}
                   className="cursor-pointer"
@@ -160,7 +291,7 @@ export default function HoldingsTable({
                       <TableCell colSpan={8} className="text-gray-700 text-sm">
                         <div className="flex items-center justify-between">
                           <span>
-                            Lot {lot.lot_id.slice(0, 8)}：{lot.open_date} ·{" "}
+                            买入 {lot.lot_id.slice(0, 8)}：{lot.open_date} ·{" "}
                             {lot.quantity} 股 @ ¥{lot.cost_price}
                             {Number(lot.fees) > 0 && ` · 手续费 ¥${lot.fees}`}
                             {lot.note && ` · ${lot.note}`}
@@ -169,7 +300,7 @@ export default function HoldingsTable({
                             <Button
                               variant="ghost"
                               size="icon"
-                              title="编辑 Lot"
+                              title="编辑买入"
                               onClick={() => onEditLot(h.ticker, lot)}
                             >
                               <Pencil className="h-3 w-3" />
@@ -177,7 +308,7 @@ export default function HoldingsTable({
                             <Button
                               variant="ghost"
                               size="icon"
-                              title="删除 Lot"
+                              title="删除买入"
                               onClick={() => removeLot(h.ticker, lot.lot_id)}
                             >
                               <Trash2 className="h-3 w-3 text-red-500" />
@@ -212,7 +343,7 @@ export default function HoldingsTable({
                   )}
                 </>
               )}
-            </>
+            </Fragment>
           );
         })}
         {holdings.length === 0 && (
