@@ -61,6 +61,13 @@ export interface WorkflowCompletedEventData {
   final_decision: DecisionPayload | null;
 }
 
+export interface DataPreflightEventData {
+  conversation_id: string;
+  thread_id: string;
+  trading_day: string;
+  filled: boolean;
+}
+
 export type AgentComponentMessage = MessageWithPayload<{
   component_type: AgentComponentType;
   content: string;
@@ -115,6 +122,7 @@ export interface AgentEventMap {
   workflow_started: WorkflowStartedEventData;
   agent_completed: AgentCompletedEventData;
   workflow_completed: WorkflowCompletedEventData;
+  data_preflight: DataPreflightEventData;
 }
 
 export interface TaskView {
@@ -156,6 +164,8 @@ export type SSEData = {
 export type AgentStreamRequest = {
   query: string;
   agent_name: string;
+  portfolio_id?: string;
+  ticker?: string;
 } & Partial<Pick<BaseEventData, "conversation_id" | "thread_id">>;
 
 export interface AgentMetadata {

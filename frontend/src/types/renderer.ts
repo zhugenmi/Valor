@@ -19,6 +19,7 @@ export type MarkdownRendererProps = BaseRendererProps;
 export type ToolCallRendererProps = BaseRendererProps;
 export type ChatConversationRendererProps = BaseRendererProps;
 export type DecisionRendererProps = BaseRendererProps;
+export type DiagnosisSectionRendererProps = BaseRendererProps;
 
 /**
  * Mapping from component type to its corresponding props type
@@ -33,6 +34,7 @@ export type RendererPropsMap = {
   tool_call: ToolCallRendererProps;
   subagent_conversation: ChatConversationRendererProps;
   decision: DecisionRendererProps;
+  diagnosis_section: DiagnosisSectionRendererProps;
 };
 
 /**

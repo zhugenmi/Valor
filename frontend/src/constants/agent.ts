@@ -50,6 +50,7 @@ export const AGENT_COMPONENT_TYPE = [
   "subagent_conversation",
   "scheduled_task_controller",
   "decision",
+  "diagnosis_section",
   ...AGENT_SECTION_COMPONENT_TYPE,
   ...AGENT_MULTI_SECTION_COMPONENT_TYPE,
 ] as const;
@@ -68,6 +69,7 @@ export const COMPONENT_RENDERER_MAP: {
   tool_call: ToolCallRenderer,
   subagent_conversation: ChatConversationRenderer,
   decision: DecisionRenderer,
+  diagnosis_section: MarkdownRenderer, // placeholder — Task 12 replaces with DiagnosisSectionRenderer
 };
 
 export const AGENT_AVATAR_MAP: Record<string, string> = {

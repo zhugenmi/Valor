@@ -1,3 +1,9 @@
+import {
+  AGENT_ORDER,
+  type AgentState,
+  type Decision,
+  SUB_AGENT_KEYS,
+} from "@/app/analysis/components/constants";
 import { create } from "mutative";
 import { AGENT_SECTION_COMPONENT_TYPE } from "@/constants/agent";
 import type {
@@ -266,10 +272,95 @@ function processSSEEvent(draft: AgentConversationsStore, sseData: SSEData) {
       break;
     }
 
+    case "workflow_started": {
+      // Create a diagnosis_section ChatItem with all 9 agent slots pending
+      const agents: Record<string, AgentState> = {};
+      for (const name of AGENT_ORDER) {
+        agents[name] = { status: "pending", output: null };
+      }
+      handleChatItemEvent(
+        draft,
+        {
+          role: "agent",
+          conversation_id: data.conversation_id,
+          thread_id: data.thread_id,
+          task_id: "",
+          item_id: `diagnosis-${data.conversation_id}`,
+          metadata: {},
+          component_type: "diagnosis_section",
+          payload: {
+            content: JSON.stringify({
+              ticker: data.ticker,
+              agents,
+              decision: null,
+              preflight: null,
+              currentAgent: AGENT_ORDER[0],
+            }),
+          },
+        },
+        "replace",
+      );
+      break;
+    }
+
+    case "data_preflight": {
+      // Update the diagnosis_section's preflight field
+      const { task } = ensurePath(draft, { ...data, task_id: "" });
+      for (const item of task.items) {
+        if (item.component_type === "diagnosis_section") {
+          try {
+            const parsed = JSON.parse(item.payload.content);
+            parsed.preflight = { trading_day: data.trading_day, filled: data.filled };
+            item.payload.content = JSON.stringify(parsed);
+          } catch {
+            // skip
+          }
+        }
+      }
+      break;
+    }
+
+    case "agent_completed": {
+      // Update the diagnosis_section's agent slot
+      const { task } = ensurePath(draft, { ...data, task_id: "" });
+      for (const item of task.items) {
+        if (item.component_type !== "diagnosis_section") continue;
+        try {
+          const parsed = JSON.parse(item.payload.content);
+          const dotIdx = data.agent.indexOf(".");
+          if (dotIdx > 0) {
+            const parent = data.agent.slice(0, dotIdx);
+            const sub = data.agent.slice(dotIdx + 1);
+            const current = parsed.agents[parent] ?? { status: "running", output: null };
+            const subStates = { ...(current.subStates ?? {}), [sub]: data.state };
+            const allSubs = SUB_AGENT_KEYS[parent] ?? [];
+            const allDone = allSubs.every((k: string) => k in subStates);
+            parsed.agents[parent] = { ...current, status: allDone ? "completed" : "running", subStates };
+          } else {
+            parsed.agents[data.agent] = { status: "completed", output: data.state };
+          }
+          // Update currentAgent to next pending
+          parsed.currentAgent = (() => {
+            for (const name of AGENT_ORDER) {
+              const s = parsed.agents[name];
+              if (!s || s.status === "pending") return name;
+              if (s.status === "running") return name;
+            }
+            return null;
+          })();
+          item.payload.content = JSON.stringify(parsed);
+        } catch {
+          // skip
+        }
+      }
+      break;
+    }
+
     case "workflow_completed": {
       // ValorAgent full_analysis final result - render as a decision card in
       // the main thread. Skip when backend couldn't extract a final decision.
       if (!data.final_decision) break;
+      // 1. Existing: render as a decision card in the main thread
       handleChatItemEvent(
         draft,
         {
@@ -284,6 +375,20 @@ function processSSEEvent(draft: AgentConversationsStore, sseData: SSEData) {
         },
         "replace",
       );
+      // 2. Also fill the diagnosis_section's decision slot
+      const { task } = ensurePath(draft, { ...data, task_id: "" });
+      for (const item of task.items) {
+        if (item.component_type === "diagnosis_section") {
+          try {
+            const parsed = JSON.parse(item.payload.content);
+            parsed.decision = data.final_decision;
+            parsed.currentAgent = null;
+            item.payload.content = JSON.stringify(parsed);
+          } catch {
+            // skip
+          }
+        }
+      }
       break;
     }
 
