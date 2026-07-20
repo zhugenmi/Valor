@@ -148,17 +148,19 @@ async def list_holdings(pid: str):
 
 @router.post("/{pid}/holdings")
 async def add_holding(pid: str, body: Holding):
-    try:
-        storage.load_portfolio(pid)
-    except storage.PortfolioNotFound:
-        raise HTTPException(status_code=404, detail="portfolio not found")
     if not body.lots:
         body.lots = []
     for lot in body.lots:
         if not lot.lot_id:
             lot.lot_id = storage.gen_lot_id()
-    updated = storage.add_holding(pid, body)
-    return ok(updated.holdings[-1].model_dump(mode="json"))
+    try:
+        updated = storage.add_holding(pid, body)
+    except storage.PortfolioNotFound:
+        raise HTTPException(status_code=404, detail="portfolio not found")
+    target = next((h for h in updated.holdings if h.ticker == body.ticker), None)
+    if target is None:
+        raise HTTPException(status_code=500, detail="holding not found after add")
+    return ok(target.model_dump(mode="json"))
 
 
 @router.put("/{pid}/holdings/{ticker}")
@@ -186,17 +188,13 @@ async def delete_holding(pid: str, ticker: str):
 @router.post("/{pid}/holdings/{ticker}/lots")
 async def add_lot(pid: str, ticker: str, body: Lot):
     try:
-        p = storage.load_portfolio(pid)
+        updated = storage.add_lot_to_holding(pid, ticker, body)
     except storage.PortfolioNotFound:
         raise HTTPException(status_code=404, detail="portfolio not found")
-    if not body.lot_id:
-        body.lot_id = storage.gen_lot_id()
-    for h in p.holdings:
-        if h.ticker == ticker:
-            h.lots.append(body)
-            storage.save_portfolio(p)
-            return ok(h.model_dump(mode="json"))
-    raise HTTPException(status_code=404, detail="holding not found")
+    except storage.HoldingNotFound:
+        raise HTTPException(status_code=404, detail="holding not found")
+    h = next(x for x in updated.holdings if x.ticker == ticker)
+    return ok(h.model_dump(mode="json"))
 
 
 class SellLotInput(BaseModel):

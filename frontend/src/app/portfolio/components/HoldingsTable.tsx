@@ -1,11 +1,11 @@
 import {
   ChevronDown,
   ChevronRight,
+  Minus,
   Pencil,
   Plus,
   Stethoscope,
   Trash2,
-  Minus,
 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
@@ -19,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatMoney, formatPnlClass, formatPercent } from "@/lib/format";
+import { formatMoney, formatPercent, formatPnlClass } from "@/lib/format";
 import { usePortfolioStore } from "../store";
 import type { Holding, Lot, SellLot } from "../types";
 
@@ -55,7 +55,8 @@ export default function HoldingsTable({
   }
 
   async function removeHolding(ticker: string) {
-    if (!confirm(`删除持仓 ${ticker}？此操作会移除所有 Lot 与 SellLot 记录。`)) return;
+    if (!confirm(`删除持仓 ${ticker}？此操作会移除所有 Lot 与 SellLot 记录。`))
+      return;
     await portfolioApi.deleteHolding(pid, ticker);
     await fetchDetail(pid);
   }
@@ -111,7 +112,9 @@ export default function HoldingsTable({
                 <TableCell
                   className={`text-right ${m ? formatPnlClass(m.unrealized_pnl) : ""}`}
                 >
-                  {m ? `${formatMoney(m.unrealized_pnl)} (${formatPercent(m.unrealized_pnl_pct)})` : "-"}
+                  {m
+                    ? `${formatMoney(m.unrealized_pnl)} (${formatPercent(m.unrealized_pnl_pct)})`
+                    : "-"}
                 </TableCell>
                 <TableCell className="text-right">
                   {m ? formatPercent(m.weight) : "-"}

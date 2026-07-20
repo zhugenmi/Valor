@@ -9,8 +9,8 @@ import CSVImport from "./components/CSVImport";
 import EditLotForm from "./components/EditLotForm";
 import HoldingForm from "./components/HoldingForm";
 import HoldingsTable from "./components/HoldingsTable";
-import ReduceForm from "./components/ReduceForm";
 import RebalancePanel from "./components/RebalancePanel";
+import ReduceForm from "./components/ReduceForm";
 import StrategyList from "./components/StrategyList";
 import { usePortfolioStore } from "./store";
 import type { Lot } from "./types";
@@ -74,7 +74,10 @@ export default function PortfolioDetailPage() {
               disabled={analyticsLoading}
             >
               <RefreshCw
-                className={cn("mr-1 h-4 w-4", analyticsLoading && "animate-spin")}
+                className={cn(
+                  "mr-1 h-4 w-4",
+                  analyticsLoading && "animate-spin",
+                )}
               />
               {analyticsLoading ? "刷新中..." : "刷新行情"}
             </Button>

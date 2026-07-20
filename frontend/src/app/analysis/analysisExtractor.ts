@@ -161,6 +161,15 @@ function _normalizeSignal(v: unknown): Signal | undefined {
   return undefined;
 }
 
+/** Extract YYYY-MM-DD from an ISO date string or Date value. */
+function _fmtDate(v: unknown): string {
+  if (!v) return "";
+  const s = typeof v === "string" ? v : String(v);
+  // ISO: "2026-01-12T00:00:00" → "2026-01-12"
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : "";
+}
+
 /** Format a metric value for display. Knows about percentage/currency keys. */
 export function formatMetricValue(key: string, value: unknown): string {
   if (value == null) return "";
@@ -479,8 +488,17 @@ function _extractMarketData(
       const maxClose = Math.max(...closes);
       const minClose = Math.min(...closes);
       const avgClose = closes.reduce((a, b) => a + b, 0) / closes.length;
-      metrics["最高价"] = maxClose.toFixed(2);
-      metrics["最低价"] = minClose.toFixed(2);
+      // locate date for max/min close
+      const maxIdx = closes.indexOf(maxClose);
+      const minIdx = closes.indexOf(minClose);
+      const maxDate = maxIdx >= 0 ? _fmtDate(prices[maxIdx]?.["date"]) : "";
+      const minDate = minIdx >= 0 ? _fmtDate(prices[minIdx]?.["date"]) : "";
+      metrics["最高价"] = maxDate
+        ? `${maxClose.toFixed(2)}（${maxDate}）`
+        : maxClose.toFixed(2);
+      metrics["最低价"] = minDate
+        ? `${minClose.toFixed(2)}（${minDate}）`
+        : minClose.toFixed(2);
       metrics["均价"] = avgClose.toFixed(2);
       metrics["数据天数"] = closes.length;
     }

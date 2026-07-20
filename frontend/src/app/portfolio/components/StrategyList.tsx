@@ -34,7 +34,7 @@ export default function StrategyList({ pid }: Props) {
   const defaultTickers = current.holdings.map((h) => h.ticker);
 
   return (
-    <div className="space-y-4">
+    <div className="w-full space-y-4">
       <AllocatorRunner pid={pid} defaultTickers={defaultTickers} />
       <Card className="p-4">
         <div className="mb-2 font-medium">已保存策略</div>

@@ -23,7 +23,7 @@ valor/
 │   │   ├── hooks/         # useSSE、useDebounce 等
 │   │   ├── components/    # 通用组件（shadcn/ui + valuecell）
 │   │   ├── store/         # Zustand 状态管理
-│   │   ├── i18n/          # 中/英/日/繁中文
+│   │   ├── i18n/          # 中/英文
 │   │   ├── types/         # TypeScript 类型定义
 │   │   ├── routes.ts      # 前端路由
 │   │   └── root.tsx       # 应用入口

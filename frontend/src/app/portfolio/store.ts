@@ -28,7 +28,10 @@ export const usePortfolioStore = create<PortfolioState>((set) => ({
     set({ loading: true, error: null });
     try {
       const res = await portfolioApi.list();
-      set({ list: (res as unknown as { data: PortfolioSummary[] }).data ?? [], loading: false });
+      set({
+        list: (res as unknown as { data: PortfolioSummary[] }).data ?? [],
+        loading: false,
+      });
     } catch (e) {
       set({ error: (e as Error).message, loading: false });
     }
@@ -41,7 +44,9 @@ export const usePortfolioStore = create<PortfolioState>((set) => ({
         portfolioApi.analytics(id).catch(() => null),
       ]);
       const p = (pRes as unknown as { data: Portfolio }).data ?? null;
-      const a = aRes ? (aRes as unknown as { data: PortfolioAnalytics }).data ?? null : null;
+      const a = aRes
+        ? ((aRes as unknown as { data: PortfolioAnalytics }).data ?? null)
+        : null;
       set({ current: p, analytics: a, loading: false });
     } catch (e) {
       set({ error: (e as Error).message, loading: false });
@@ -51,14 +56,19 @@ export const usePortfolioStore = create<PortfolioState>((set) => ({
     set({ analyticsLoading: true });
     try {
       const res = await portfolioApi.analytics(id);
-      set({ analytics: (res as unknown as { data: PortfolioAnalytics }).data ?? null, analyticsLoading: false });
+      set({
+        analytics:
+          (res as unknown as { data: PortfolioAnalytics }).data ?? null,
+        analyticsLoading: false,
+      });
     } catch (e) {
       set({ analyticsLoading: false, error: (e as Error).message });
     }
   },
   create: async (input) => {
     const res = await portfolioApi.create(input);
-    const p = (res as unknown as { data: Portfolio }).data ?? (res as Portfolio);
+    const p =
+      (res as unknown as { data: Portfolio }).data ?? (res as Portfolio);
     set((s) => ({
       list: [
         ...s.list,

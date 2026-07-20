@@ -16,7 +16,7 @@ export default function PortfolioListPage() {
   }, [fetchList]);
 
   return (
-    <div className="mx-auto max-w-4xl p-6">
+    <div className="w-full px-6 py-6">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="font-bold text-2xl">我的组合</h1>
         <Button onClick={() => setShowForm(true)}>
@@ -25,36 +25,41 @@ export default function PortfolioListPage() {
       </div>
       {error && <div className="mb-4 text-red-500">{error}</div>}
       {loading && <div className="text-gray-500">加载中...</div>}
-      <div className="space-y-3">
-        {list.map((p) => (
-          <Card
-            className="flex cursor-pointer items-center justify-between p-4 hover:shadow-md"
-            key={p.portfolio_id}
-            onClick={() => navigate(`/portfolio/${p.portfolio_id}`)}
-          >
-            <div>
-              <div className="font-medium text-lg">{p.name}</div>
-              <div className="text-gray-500 text-sm">
-                基准 {p.benchmark} · 现金 ¥{Number(p.cash).toLocaleString()} ·
-                更新 {new Date(p.updated_at).toLocaleString()}
-              </div>
-            </div>
-            <Button
-              className="variant-ghost size-icon"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (confirm(`删除组合「${p.name}」？`)) remove(p.portfolio_id);
-              }}
+      <div className="mx-auto max-w-4xl">
+        <div className="space-y-3">
+          {list.map((p) => (
+            <Card
+              className="flex cursor-pointer items-center justify-between p-4 hover:shadow-md"
+              key={p.portfolio_id}
+              onClick={() => navigate(`/portfolio/${p.portfolio_id}`)}
             >
-              <Trash2 className="h-4 w-4 text-red-500" />
-            </Button>
-          </Card>
-        ))}
-        {!loading && list.length === 0 && (
-          <div className="py-12 text-center text-gray-500">
-            暂无组合，点击「新建」开始
-          </div>
-        )}
+              <div>
+                <div className="font-medium text-lg">{p.name}</div>
+                <div className="text-gray-500 text-sm">
+                  基准 {p.benchmark} · 现金 ¥{Number(p.cash).toLocaleString()} ·
+                  更新 {new Date(p.updated_at).toLocaleString()}
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="ml-auto"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (confirm(`删除组合「${p.name}」？`))
+                    remove(p.portfolio_id);
+                }}
+              >
+                <Trash2 className="h-4 w-4 text-red-500" />
+              </Button>
+            </Card>
+          ))}
+          {!loading && list.length === 0 && (
+            <div className="py-12 text-center text-gray-500">
+              暂无组合，点击「新建」开始
+            </div>
+          )}
+        </div>
       </div>
       <PortfolioForm
         onClose={() => setShowForm(false)}

@@ -30,6 +30,7 @@ export default function HoldingForm({
   name,
 }: Props) {
   const fetchDetail = usePortfolioStore((s) => s.fetchDetail);
+  const [submitting, setSubmitting] = useState(false);
   const [tickerInput, setTickerInput] = useState("");
   const [nameInput, setNameInput] = useState("");
   const [quantity, setQuantity] = useState("");
@@ -40,8 +41,8 @@ export default function HoldingForm({
 
   useEffect(() => {
     if (open) {
-      setTickerInput(mode === "append" ? ticker ?? "" : "");
-      setNameInput(mode === "append" ? name ?? "" : "");
+      setTickerInput(mode === "append" ? (ticker ?? "") : "");
+      setNameInput(mode === "append" ? (name ?? "") : "");
       setQuantity("");
       setCostPrice("");
       setOpenDate(new Date().toISOString().slice(0, 10));
@@ -53,31 +54,40 @@ export default function HoldingForm({
   const isCreate = mode === "create";
 
   async function submit() {
-    const t = (isCreate ? tickerInput.trim().padStart(6, "0") : ticker ?? "").trim();
-    if (!t || !quantity || !costPrice) return;
-    const lotPayload = {
-      lot_id: "",
-      open_date: openDate || new Date().toISOString().slice(0, 10),
-      quantity: Number(quantity),
-      cost_price: costPrice,
-      fees: fees || "0",
-      note: note.trim() || null,
-    };
-    if (isCreate) {
-      await portfolioApi.addHolding(pid, {
-        ticker: t,
-        name: nameInput.trim() || undefined,
-        side: "long",
-        lots: [lotPayload],
-      });
-    } else {
-      await portfolioApi.addLot(pid, t, lotPayload);
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      const t = (
+        isCreate ? tickerInput.trim().padStart(6, "0") : (ticker ?? "")
+      ).trim();
+      if (!t || !quantity || !costPrice) return;
+      const lotPayload = {
+        lot_id: "",
+        open_date: openDate || new Date().toISOString().slice(0, 10),
+        quantity: Number(quantity),
+        cost_price: costPrice,
+        fees: fees || "0",
+        note: note.trim() || null,
+      };
+      if (isCreate) {
+        await portfolioApi.addHolding(pid, {
+          ticker: t,
+          name: nameInput.trim() || undefined,
+          side: "long",
+          lots: [lotPayload],
+        });
+      } else {
+        await portfolioApi.addLot(pid, t, lotPayload);
+      }
+      await fetchDetail(pid);
+      onClose();
+    } finally {
+      setSubmitting(false);
     }
-    await fetchDetail(pid);
-    onClose();
   }
 
-  const valid = (isCreate ? !!tickerInput.trim() : !!ticker) && !!quantity && !!costPrice;
+  const valid =
+    (isCreate ? !!tickerInput.trim() : !!ticker) && !!quantity && !!costPrice;
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -146,8 +156,8 @@ export default function HoldingForm({
           <Button variant="outline" onClick={onClose}>
             取消
           </Button>
-          <Button onClick={submit} disabled={!valid}>
-            {isCreate ? "添加" : "增持"}
+          <Button onClick={submit} disabled={!valid || submitting}>
+            {submitting ? "提交中…" : isCreate ? "添加" : "增持"}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -65,7 +65,7 @@ export default function RebalancePanel({ pid }: { pid: string }) {
   if (!current) return null;
 
   return (
-    <div className="space-y-4">
+    <div className="w-full space-y-4">
       <Card className={cn("flex items-end gap-2 p-4")}>
         <div className="flex-1">
           <label htmlFor="strategy-select" className="text-sm">

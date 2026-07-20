@@ -81,12 +81,13 @@ export default function ReduceForm({
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>减仓 {ticker}{name ? ` · ${name}` : ""}</DialogTitle>
+          <DialogTitle>
+            减仓 {ticker}
+            {name ? ` · ${name}` : ""}
+          </DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          <div className="text-gray-500 text-sm">
-            当前持仓 {maxQuantity} 股
-          </div>
+          <div className="text-gray-500 text-sm">当前持仓 {maxQuantity} 股</div>
           <div>
             <Label>卖出日期</Label>
             <Input

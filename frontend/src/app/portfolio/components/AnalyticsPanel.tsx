@@ -48,7 +48,7 @@ export default function AnalyticsPanel({ pid }: { pid: string }) {
   );
 
   return (
-    <div className="space-y-4">
+    <div className="w-full space-y-4">
       <div className="grid grid-cols-4 gap-3">
         <Card className="p-3">
           <div className="text-gray-500 text-sm">总资产</div>
