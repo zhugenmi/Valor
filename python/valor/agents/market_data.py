@@ -3,6 +3,7 @@ from valor.tools.api import get_financial_metrics, get_financial_statements, get
 from valor.tools.market_snapshot import get_market_snapshot
 from valor.utils.logging_config import setup_logger
 from valor.utils.api_utils import agent_endpoint
+from valor.adapters.data.akshare_cache import get_latest_trading_day
 
 from datetime import datetime, timedelta
 import pandas as pd
@@ -20,16 +21,22 @@ def market_data_agent(state: AgentState):
     messages = state["messages"]
     data = state["data"]
 
-    # Set default dates
+    # Set default dates: use most recent A-share trading day (skips weekends/holidays)
     current_date = datetime.now()
-    yesterday = current_date - timedelta(days=1)
-    end_date = data["end_date"] or yesterday.strftime('%Y-%m-%d')
+    if data["end_date"]:
+        end_date = data["end_date"]
+        end_date_obj = datetime.strptime(end_date, '%Y-%m-%d')
+    else:
+        latest = get_latest_trading_day(current_date.date())
+        end_date = latest.strftime('%Y-%m-%d')
+        end_date_obj = datetime.strptime(end_date, '%Y-%m-%d')
 
     # Ensure end_date is not in the future
-    end_date_obj = datetime.strptime(end_date, '%Y-%m-%d')
-    if end_date_obj > yesterday:
-        end_date = yesterday.strftime('%Y-%m-%d')
-        end_date_obj = yesterday
+    today = current_date.date()
+    if end_date_obj.date() > today:
+        latest = get_latest_trading_day(today)
+        end_date = latest.strftime('%Y-%m-%d')
+        end_date_obj = datetime.strptime(end_date, '%Y-%m-%d')
 
     if not data["start_date"]:
         # Calculate 1 year before end_date
