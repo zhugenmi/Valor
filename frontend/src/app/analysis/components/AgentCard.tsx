@@ -7,8 +7,8 @@ import {
   XCircle,
 } from "lucide-react";
 import { useState } from "react";
-import AgentResultDisplay from "./AgentResultDisplay";
-import { extractAnalysisResult } from "./analysisExtractor";
+import AgentResultDisplay from "../AgentResultDisplay";
+import { extractAnalysisResult } from "../analysisExtractor";
 import {
   AGENT_LABEL_ZH,
   type AgentState,

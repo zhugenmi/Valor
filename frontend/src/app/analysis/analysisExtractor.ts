@@ -1,4 +1,4 @@
-import { AGENT_ANALYSIS_KEYS } from "./constants";
+import { AGENT_ANALYSIS_KEYS } from "./components/constants";
 
 export type Signal = "bullish" | "bearish" | "neutral";
 

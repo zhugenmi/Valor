@@ -4,7 +4,7 @@ import type {
   SystemFailedEvent,
   WorkflowCompletedEvent,
   WorkflowStartedEvent,
-} from "@/app/analysis/constants";
+} from "@/app/analysis/components/constants";
 import useSSE from "@/hooks/use-sse";
 import { getServerUrl } from "@/lib/api-client";
 

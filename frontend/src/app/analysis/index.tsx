@@ -7,15 +7,15 @@ import AdvancedParams, {
   type AdvancedParamsValue,
   defaultAnalysisDates,
 } from "./AdvancedParams";
-import AgentCard from "./AgentCard";
+import AgentCard from "./components/AgentCard";
 import {
   AGENT_ORDER,
   type AgentState,
   type Decision,
   SUB_AGENT_KEYS,
-} from "./constants";
-import DecisionPanel from "./DecisionPanel";
-import ProgressBar from "./ProgressBar";
+} from "./components/constants";
+import DecisionPanel from "./components/DecisionPanel";
+import ProgressBar from "./components/ProgressBar";
 
 function initPendingAgents(): Record<string, AgentState> {
   const agents: Record<string, AgentState> = {};
