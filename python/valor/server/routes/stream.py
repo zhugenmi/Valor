@@ -11,13 +11,23 @@ import json
 import logging
 import math
 import uuid
+from datetime import UTC, datetime
 from typing import AsyncGenerator
 
 from fastapi import APIRouter
 from starlette.responses import StreamingResponse
 
 from valor.agents.workflow import stream_analysis
+from valor.conversations.models import Conversation, ConversationMessage
+from valor.conversations.storage import (
+    append_message,
+    create_conversation,
+    update_conversation_status,
+)
+from valor.portfolio.storage import PortfolioNotFound
+from valor.server.data_preflight import ensure_latest_trading_day_data
 from valor.server.intent import classify_intent
+from valor.server.portfolio_context import load_portfolio_context
 
 router = APIRouter(prefix="/api/v1", tags=["Stream"])
 
@@ -228,10 +238,40 @@ async def agent_stream(body: dict):
     thread_id: str = str(uuid.uuid4())
     start_date: str | None = body.get("start_date") or None
     end_date: str | None = body.get("end_date") or None
+    portfolio_id: str | None = body.get("portfolio_id") or None
+    request_ticker: str | None = body.get("ticker") or None
 
     async def _stream() -> AsyncGenerator[str, None]:
         # 1. conversation_started
         yield _sse("conversation_started", {"conversation_id": conversation_id})
+
+        # Persist conversation
+        now_iso = datetime.now(UTC).isoformat()
+        create_conversation(Conversation(
+            id=conversation_id,
+            agent_name=agent_name,
+            title=query[:30] if query else None,
+            status="active",
+            portfolio_id=portfolio_id,
+            ticker=request_ticker,
+            created_at=now_iso,
+            updated_at=now_iso,
+        ))
+        # User message
+        _msg_seq = 0
+
+        def _persist(role: str, event_type: str, content: str) -> None:
+            nonlocal _msg_seq
+            _msg_seq += 1
+            append_message(ConversationMessage(
+                id=f"msg-{uuid.uuid4()}",
+                conversation_id=conversation_id,
+                role=role,
+                event_type=event_type,
+                content=content,
+                created_at=datetime.now(UTC).isoformat(),
+                seq=_msg_seq,
+            ))
 
         # 2. Echo the user's message so it renders in the chat UI.
         #    Must come before thread_started: both use item_id="" and "message"
@@ -247,6 +287,7 @@ async def agent_stream(body: dict):
             "metadata": {},
             "payload": {"content": query},
         })
+        _persist("user", "message", query)
 
         # 3. thread_started
         yield _sse("thread_started", {
@@ -390,6 +431,36 @@ async def agent_stream(body: dict):
                         },
                     })
             else:  # full_analysis - new streaming path
+                # Resolve portfolio context (real holdings if portfolio_id provided)
+                if portfolio_id and request_ticker:
+                    try:
+                        portfolio = load_portfolio_context(portfolio_id, request_ticker)
+                    except PortfolioNotFound:
+                        yield _sse("system_failed", {
+                            "role": "system",
+                            "conversation_id": conversation_id,
+                            "thread_id": thread_id,
+                            "task_id": "",
+                            "item_id": "",
+                            "metadata": {},
+                            "payload": {"content": f"组合不存在: {portfolio_id}"},
+                        })
+                        update_conversation_status(conversation_id, "failed")
+                        yield _sse("done", {"conversation_id": conversation_id, "thread_id": thread_id})
+                        return
+                else:
+                    portfolio = {"cash": 100000.0, "stock": 0}
+
+                # Pre-flight: ensure latest trading day data cached
+                preflight = ensure_latest_trading_day_data(ticker)
+                yield _sse("data_preflight", {
+                    "conversation_id": conversation_id,
+                    "thread_id": thread_id,
+                    "trading_day": preflight["trading_day"],
+                    "filled": preflight["filled"],
+                })
+                _persist("system", "data_preflight", json.dumps(preflight, ensure_ascii=False))
+
                 yield _sse("workflow_started", {
                     "conversation_id": conversation_id,
                     "thread_id": thread_id,
@@ -419,6 +490,7 @@ async def agent_stream(body: dict):
                             ticker=ticker,
                             start_date=start_date,
                             end_date=end_date,
+                            portfolio=portfolio,
                             stage_callback=_stage_callback,
                         ):
                             _put(("chunk", chunk))
@@ -443,6 +515,9 @@ async def agent_stream(body: dict):
                                 skip_keys=seen_debate_subs,
                             ):
                                 yield sse_str
+                            _persist("assistant", "agent_completed",
+                                     json.dumps({"agent": node_name, "state": state_delta},
+                                                default=_json_default, ensure_ascii=False))
                         else:
                             yield _sse("agent_completed", {
                                 "conversation_id": conversation_id,
@@ -450,6 +525,9 @@ async def agent_stream(body: dict):
                                 "agent": node_name,
                                 "state": state_delta,
                             })
+                            _persist("assistant", "agent_completed",
+                                     json.dumps({"agent": node_name, "state": state_delta},
+                                                default=_json_default, ensure_ascii=False))
                     elif event_type == "debate_stage":
                         sub_key, sub_payload = payload
                         seen_debate_subs.add(sub_key)
@@ -459,6 +537,9 @@ async def agent_stream(body: dict):
                             "agent": f"bull_bear_debate.{sub_key}",
                             "state": sub_payload,
                         })
+                        _persist("assistant", "agent_completed",
+                                 json.dumps({"agent": f"bull_bear_debate.{sub_key}", "state": sub_payload},
+                                            default=_json_default, ensure_ascii=False))
                     elif event_type == "done":
                         break
                     elif event_type == "error":
@@ -471,6 +552,8 @@ async def agent_stream(body: dict):
                             "metadata": {},
                             "payload": {"content": f"分析失败: {payload}"},
                         })
+                        _persist("system", "system_failed", json.dumps({"error": payload}, ensure_ascii=False))
+                        update_conversation_status(conversation_id, "failed")
                         yield _sse("done", {"conversation_id": conversation_id, "thread_id": thread_id})
                         return
 
@@ -480,6 +563,10 @@ async def agent_stream(body: dict):
                     "thread_id": thread_id,
                     "final_decision": final_decision,
                 })
+                _persist("assistant", "workflow_completed",
+                         json.dumps({"final_decision": final_decision},
+                                    default=_json_default, ensure_ascii=False))
+                update_conversation_status(conversation_id, "completed")
 
         except Exception as exc:
             yield _sse("system_failed", {
@@ -491,6 +578,8 @@ async def agent_stream(body: dict):
                 "metadata": {},
                 "payload": {"content": f"分析失败: {exc}"},
             })
+            _persist("system", "system_failed", json.dumps({"error": str(exc)}, ensure_ascii=False))
+            update_conversation_status(conversation_id, "failed")
 
         # 4. reasoning_completed
         yield _sse("reasoning_completed", {
