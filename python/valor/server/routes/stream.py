@@ -445,6 +445,9 @@ async def agent_stream(body: dict):
                             "metadata": {},
                             "payload": {"content": f"组合不存在: {portfolio_id}"},
                         })
+                        _persist("system", "system_failed",
+                                 json.dumps({"error": f"组合不存在: {portfolio_id}"},
+                                            ensure_ascii=False))
                         update_conversation_status(conversation_id, "failed")
                         yield _sse("done", {"conversation_id": conversation_id, "thread_id": thread_id})
                         return
