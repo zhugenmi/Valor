@@ -32,6 +32,7 @@ import {
   ScheduledTaskRenderer,
   ToolCallRenderer,
 } from "@/components/valuecell/renderer";
+import DiagnosisSectionRenderer from "@/app/agent/components/agent-view/diagnosis-section";
 import { TimeUtils } from "@/lib/time";
 import type { AgentComponentType, AgentInfo } from "@/types/agent";
 import type { RendererComponent } from "@/types/renderer";
@@ -69,7 +70,7 @@ export const COMPONENT_RENDERER_MAP: {
   tool_call: ToolCallRenderer,
   subagent_conversation: ChatConversationRenderer,
   decision: DecisionRenderer,
-  diagnosis_section: MarkdownRenderer, // placeholder — Task 12 replaces with DiagnosisSectionRenderer
+  diagnosis_section: DiagnosisSectionRenderer,
 };
 
 export const AGENT_AVATAR_MAP: Record<string, string> = {
