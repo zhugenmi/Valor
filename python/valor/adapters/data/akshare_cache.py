@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 import json
 from pathlib import Path
 import os
@@ -643,3 +643,35 @@ def get_stock_news(
     )
     _log_cache_upsert(STOCK_NEWS_EM_TABLE, symbol, len(df))
     return df
+
+
+def get_latest_trading_day(today: Optional["date"] = None) -> "date":
+    """Return the most recent A-share trading day on or before `today`.
+
+    Looks back up to 30 calendar days to skip weekends/holidays. Falls back
+    to the most recent weekday if the trade calendar fetch fails entirely.
+    """
+    from datetime import date as _date, timedelta
+
+    today = today or _date.today()
+    start = today - timedelta(days=30)
+    try:
+        df = query_trade_dates(start, today)
+        if df is None or df.empty:
+            raise RuntimeError("query_trade_dates returned empty")
+        df["calendar_date"] = pd.to_datetime(df["calendar_date"])
+        trading = df[df["is_trading_day"].astype(int) == 1]["calendar_date"].dt.normalize()
+        trading_days = sorted(trading.tolist())
+        today_ts = pd.Timestamp(today).normalize()
+        for day in reversed(trading_days):
+            if day <= today_ts:
+                return day.date()
+        # All trade dates in window are after today (unlikely); fall through
+    except Exception as exc:
+        logger.warning("⚠️ get_latest_trading_day 查询交易日历失败，降级最近工作日: %s", exc)
+
+    # Fallback: most recent weekday <= today
+    d = today
+    while d.weekday() >= 5:  # Sat=5, Sun=6
+        d -= timedelta(days=1)
+    return d
