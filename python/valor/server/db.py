@@ -37,6 +37,29 @@ CREATE TABLE IF NOT EXISTS user_profile (
     content     TEXT NOT NULL,
     created_at  TEXT
 );
+
+CREATE TABLE IF NOT EXISTS conversations (
+    id           TEXT PRIMARY KEY,
+    agent_name   TEXT NOT NULL,
+    title        TEXT,
+    status       TEXT NOT NULL,
+    portfolio_id TEXT,
+    ticker       TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS conversation_messages (
+    id              TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    role            TEXT NOT NULL,
+    event_type      TEXT,
+    content         TEXT,
+    created_at      TEXT NOT NULL,
+    seq             INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_conv ON conversation_messages(conversation_id, seq);
 """
 
 
