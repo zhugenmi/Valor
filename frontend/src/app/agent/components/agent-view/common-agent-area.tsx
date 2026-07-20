@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { type FC, memo, useCallback, useEffect, useState } from "react";
+import { type FC, memo, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Navigate,
@@ -51,6 +51,15 @@ const CommonAgentAreaContent: FC<CommonAgentAreaProps> = ({ agentName }) => {
   const conversationId = useSearchParams()[0].get("id") ?? "";
   const navigate = useNavigate();
   const inputValueFromLocation = useLocation().state?.inputValue;
+  const portfolioIdFromLocation = useLocation().state?.portfolioId;
+  const tickerFromLocation = useLocation().state?.ticker;
+
+  const portfolioIdRef = useRef<string | undefined>(portfolioIdFromLocation);
+  const tickerRef = useRef<string | undefined>(tickerFromLocation);
+  useEffect(() => {
+    portfolioIdRef.current = portfolioIdFromLocation;
+    tickerRef.current = tickerFromLocation;
+  }, [portfolioIdFromLocation, tickerFromLocation]);
 
   // Use optimized hooks with built-in shallow comparison
   const { curConversation, curConversationId } = useCurrentConversation();
@@ -151,6 +160,8 @@ const CommonAgentAreaContent: FC<CommonAgentAreaProps> = ({ agentName }) => {
           query: message,
           agent_name: agentName,
           conversation_id: conversationId,
+          portfolio_id: portfolioIdRef.current,
+          ticker: tickerRef.current,
         };
 
         tracker.send("use", {

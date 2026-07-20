@@ -11,7 +11,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
-import { Link } from "react-router";
+import { useNavigate } from "react-router";
 import { portfolioApi } from "@/api/portfolio";
 import { Button } from "@/components/ui/button";
 import {
@@ -131,6 +131,7 @@ export default function HoldingsTable({
   const { analytics, fetchDetail } = usePortfolioStore();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<SortState>({ field: null, dir: "desc" });
+  const navigate = useNavigate();
 
   function toggle(ticker: string) {
     setExpanded((prev) => {
@@ -251,10 +252,21 @@ export default function HoldingsTable({
                   {m ? formatPercent(m.weight) : "-"}
                 </TableCell>
                 <TableCell className="space-x-1 text-right">
-                  <Button variant="ghost" size="icon" asChild title="诊断">
-                    <Link to={`/analysis?ticker=${h.ticker}`}>
-                      <Stethoscope className="h-4 w-4" />
-                    </Link>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title="诊断"
+                    onClick={() =>
+                      navigate("/agent/ValorAgent", {
+                        state: {
+                          inputValue: `诊断股票${h.ticker}`,
+                          portfolioId: pid,
+                          ticker: h.ticker,
+                        },
+                      })
+                    }
+                  >
+                    <Stethoscope className="h-4 w-4" />
                   </Button>
                   <Button
                     variant="ghost"
