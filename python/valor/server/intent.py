@@ -37,7 +37,7 @@ _SYSTEM_PROMPT = """你是一个意图分类器，用于股票分析助手。分
 
 意图规则：
 - chat：闲聊、问候、或非股票分析的问题（如"hi"、"你好"、"你是谁"、"谢谢"）。reply字段给出友好的中文回复。
-- full_analysis：用户要求全面分析某只股票（如"分析600519"、"贵州茅台值得买吗"、"600519怎么样"）。ticker提取6位A股代码。
+- full_analysis：用户要求全面分析某只股票（如"分析600519"、"贵州茅台值得买吗"、"600519怎么样"、"诊断股票600519"）。ticker提取6位A股代码。
 - single_analysis：用户只问某一方面：
   - technicals：技术指标、K线、走势、买卖点（如"600519的技术指标"）
   - fundamentals：基本面、财报、盈利能力（如"600519的财报"）
@@ -51,7 +51,8 @@ _SYSTEM_PROMPT = """你是一个意图分类器，用于股票分析助手。分
 输入"600519的技术指标怎么样" -> {"intent":"single_analysis","ticker":"600519","agent":"technicals","reply":null}
 输入"看看茅台的估值" -> {"intent":"single_analysis","ticker":"600519","agent":"valuation","reply":null}
 输入"最近宏观新闻" -> {"intent":"single_analysis","ticker":null,"agent":"macro_industry","reply":null}
-输入"600519资金面怎么样" -> {"intent":"single_analysis","ticker":"600519","agent":"capital_sentiment","reply":null}"""
+输入"600519资金面怎么样" -> {"intent":"single_analysis","ticker":"600519","agent":"capital_sentiment","reply":null}
+输入"诊断股票600519" -> {"intent":"full_analysis","ticker":"600519","agent":null,"reply":null}"""
 
 _TICKER_RE = re.compile(r"(?<!\d)[0-6]\d{5}(?!\d)")
 
