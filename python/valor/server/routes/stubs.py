@@ -75,41 +75,6 @@ async def enable_agent(agent_name: str, body: dict):
 
 
 # ---------------------------------------------------------------------------
-# Conversations
-# ---------------------------------------------------------------------------
-
-CONVERSATIONS_LIST = {
-    "conversations": [],
-    "total": 0,
-}
-
-
-@router.get("/conversations/")
-async def list_conversations():
-    return {"code": 0, "data": CONVERSATIONS_LIST, "msg": "ok"}
-
-
-@router.get("/conversations/{conversation_id}/history")
-async def conversation_history(conversation_id: str):
-    return {"code": 0, "data": {"conversation_id": conversation_id, "items": []}, "msg": "ok"}
-
-
-@router.delete("/conversations/{conversation_id}")
-async def delete_conversation(conversation_id: str):
-    return {"code": 0, "data": None, "msg": "ok"}
-
-
-@router.get("/conversations/{conversation_id}/scheduled-task-results")
-async def conversation_scheduled_results(conversation_id: str):
-    return {"code": 0, "data": {"conversation_id": conversation_id, "items": []}, "msg": "ok"}
-
-
-@router.get("/conversations/scheduled-task-results")
-async def all_scheduled_results():
-    return {"code": 0, "data": {"agents": []}, "msg": "ok"}
-
-
-# ---------------------------------------------------------------------------
 # Watchlist
 # ---------------------------------------------------------------------------
 

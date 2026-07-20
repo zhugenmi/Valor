@@ -11,6 +11,7 @@ from valor.adapters.data.baostock_adapter import BaoStockAdapter
 from valor.adapters.data.router import DataRouter
 from valor.server.routes.analysis import router as analysis_router
 from valor.server.routes.auth import router as auth_router
+from valor.conversations.routes import router as conversations_router
 from valor.server.routes.health import router as health_router
 from valor.server.routes.models import router as models_router
 from valor.server.routes.stock import router as stock_router
@@ -55,6 +56,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(analysis_router)
+app.include_router(conversations_router)
 app.include_router(stubs_router)
 app.include_router(stream_router)
 app.include_router(auth_router)
