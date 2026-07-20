@@ -13,6 +13,7 @@ export interface StreamAnalysisCallbacks {
   onAgentCompleted?: (data: AgentCompletedEvent) => void;
   onWorkflowCompleted?: (data: WorkflowCompletedEvent) => void;
   onSystemFailed?: (data: SystemFailedEvent) => void;
+  onError?: (error: Error) => void;
 }
 
 export interface UseStreamAnalysisReturn {
@@ -34,6 +35,9 @@ export function useStreamAnalysis(
   const { connect, close, isStreaming } = useSSE({
     url: getServerUrl("/agents/stream"),
     handlers: {
+      onError: (error: Error) => {
+        callbacksRef.current.onError?.(error);
+      },
       onData: (sseData: { event: string; data: unknown }) => {
         const { event, data } = sseData;
         switch (event) {

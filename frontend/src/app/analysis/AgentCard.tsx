@@ -206,7 +206,7 @@ export default function AgentCard({ name, state, isActive }: AgentCardProps) {
                 agentName={name}
                 showRaw={showRaw}
                 onToggleRaw={() => setShowRaw(!showRaw)}
-                rawData={state.output}
+                rawData={state!.output}
               />
             </div>
           ) : state?.output != null ? (

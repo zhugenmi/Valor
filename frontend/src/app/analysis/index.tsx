@@ -1,5 +1,6 @@
 import { Play } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useStreamAnalysis } from "@/api/analysis";
 import { Button } from "@/components/ui/button";
 import AdvancedParams, {
@@ -94,10 +95,15 @@ export default function AnalysisPage() {
       setStreaming(false);
       setCurrentAgent(null);
     },
+    onError: (error) => {
+      setStreaming(false);
+      setCurrentAgent(null);
+      toast.error(`连接错误: ${error.message}`, { duration: 8000 });
+    },
     onSystemFailed: (data) => {
       setStreaming(false);
       setCurrentAgent(null);
-      console.error("分析失败:", data.payload.content);
+      toast.error(`分析失败: ${data.payload.content}`, { duration: 8000 });
     },
   });
 
