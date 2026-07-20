@@ -53,13 +53,13 @@ def test_create_portfolio(app_client):
     assert data["portfolio_id"].startswith("pf_")
 
 
-def test_list_portfolios_empty(app_client):
+def test_list_portfolios_empty(app_client, mock_data_router):
     resp = app_client.get("/api/v1/portfolios")
     assert resp.status_code == 200
     assert resp.json()["data"] == []
 
 
-def test_list_portfolios_after_create(app_client):
+def test_list_portfolios_after_create(app_client, mock_data_router):
     app_client.post("/api/v1/portfolios", json={"name": "p1"})
     app_client.post("/api/v1/portfolios", json={"name": "p2"})
     resp = app_client.get("/api/v1/portfolios")

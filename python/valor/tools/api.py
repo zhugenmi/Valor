@@ -157,7 +157,6 @@ def get_financial_metrics(
         total_market_cap = _to_float(stock_data.get("总市值", 0))
         net_inc = _to_float(latest_income.get("净利润", 0))
         eps = _to_float(latest_financial.get("加权每股收益(元)", 0))
-        bvps = _to_float(latest_financial.get("每股净资产_调整后(元)", 0))
 
         # If market_cap is 0 (AkShare realtime down, snapshot missing), estimate from net_income * default PE
         if total_market_cap <= 0:

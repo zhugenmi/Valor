@@ -100,52 +100,13 @@ def technical_analyst_agent(state: AgentState):
         signals.append('bullish')
         confidence += 0.1
 
-    # Add reasoning collection
-    reasoning = {
-        "MACD": {
-            "signal": signals[0],
-            "details": f"MACD Line crossed {'above' if signals[0] == 'bullish' else 'below' if signals[0] == 'bearish' else 'neither above nor below'} Signal Line"
-        },
-        "RSI": {
-            "signal": signals[1],
-            "details": f"RSI is {rsi.iloc[-1]:.2f} ({'oversold' if signals[1] == 'bullish' else 'overbought' if signals[1] == 'bearish' else 'neutral'})"
-        },
-        "Bollinger": {
-            "signal": signals[2],
-            "details": f"Price is {'below lower band' if signals[2] == 'bullish' else 'above upper band' if signals[2] == 'bearish' else 'within bands'}"
-        },
-        "OBV": {
-            "signal": signals[3],
-            "details": f"OBV slope is {obv_slope:.2f} ({signals[3]})"
-        }
-    }
-
     # Determine overall signal
     bullish_signals = signals.count('bullish')
     bearish_signals = signals.count('bearish')
 
-    if bullish_signals > bearish_signals:
-        overall_signal = 'bullish'
-    elif bearish_signals > bullish_signals:
-        overall_signal = 'bearish'
-    else:
-        overall_signal = 'neutral'
-
     # Calculate confidence level based on the proportion of indicators agreeing
     total_signals = len(signals)
     confidence = max(bullish_signals, bearish_signals) / total_signals
-
-    # Generate the message content
-    message_content = {
-        "signal": overall_signal,
-        "confidence": f"{round(confidence * 100)}%",
-        "reasoning": {
-            "MACD": reasoning["MACD"],
-            "RSI": reasoning["RSI"],
-            "Bollinger": reasoning["Bollinger"],
-            "OBV": reasoning["OBV"]
-        }
-    }
 
     # 1. Trend Following Strategy
     trend_signals = calculate_trend_signals(prices_df)
@@ -248,9 +209,6 @@ def calculate_trend_signals(prices_df):
     # Calculate ADX for trend strength
     adx = calculate_adx(prices_df, 14)
 
-    # Calculate Ichimoku Cloud
-    ichimoku = calculate_ichimoku(prices_df)
-
     # Determine trend direction and strength
     short_trend = ema_8 > ema_21
     medium_trend = ema_21 > ema_55
@@ -296,7 +254,6 @@ def calculate_mean_reversion_signals(prices_df):
     rsi_28 = calculate_rsi(prices_df, 28)
 
     # Mean reversion signals
-    extreme_z_score = abs(z_score.iloc[-1]) > 2
     price_vs_bb = (prices_df['close'].iloc[-1] - bb_lower.iloc[-1]
                    ) / (bb_upper.iloc[-1] - bb_lower.iloc[-1])
 

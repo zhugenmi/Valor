@@ -6,6 +6,7 @@ from datetime import date, datetime
 import json
 from pathlib import Path
 import os
+import time
 from typing import Dict, List, Optional
 from typing import Sequence, Tuple
 
@@ -58,6 +59,22 @@ logger = setup_logger("akshare_cache")
 cache = AkshareSQLiteCache(CACHE_PATH)
 proxy_manager = ProxyManager.from_env(logger=logger)
 
+# Dedicated proxy for realtime spot quotes: fail fast (1 attempt) since the caller
+# can fall back to daily history. 3 retries on a flaky connection waste ~3s per ticker.
+_spot_proxy = ProxyManager(
+    proxies=["direct"],
+    max_attempts=1,
+    base_delay=0.5,
+    max_delay=1.0,
+    jitter=0.1,
+    logger=logger,
+)
+
+# In-memory failure cache: prevents repeated retry storms on the same ticker
+# within a short window (e.g. across list_portfolios + get_analytics calls).
+_failure_cache: dict[str, float] = {}
+FAILURE_CACHE_TTL = 60  # seconds
+
 
 def _log_cache_hit(label: str, symbol: str, rows: int) -> None:
     logger.info("📦 [cache] %s 命中，标的=%s，行数=%d", label, symbol, rows)
@@ -73,6 +90,15 @@ def _call_with_retry(func, label: str):
         return proxy_manager.run(func, label)
     except Exception as exc:  # noqa: BLE001
         logger.error(f"AkShare {label} error: {exc}")
+        return None
+
+
+def _call_spot_quote(symbol: str):
+    """Call stock_bid_ask_em with minimal retries — fail fast since the caller falls back to daily history."""
+    try:
+        return _spot_proxy.run(lambda: ak.stock_bid_ask_em(symbol=symbol), SPOT_TABLE)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"AkShare {SPOT_TABLE} error (falling back to daily history): {exc}")
         return None
 
 
@@ -98,6 +124,12 @@ def _resolve_exchange_symbol(symbol: str) -> str:
 
 
 def get_stock_spot_row(symbol: str, ttl_seconds: int = 600) -> Optional[pd.Series]:
+    # Check in-memory failure cache — avoids repeated 3-second retry storms
+    # on the same ticker across multiple API calls (e.g. list + analytics).
+    fail_ts = _failure_cache.get(symbol)
+    if fail_ts is not None and (time.monotonic() - fail_ts) < FAILURE_CACHE_TTL:
+        return None
+
     cached = cache.fetch_records(
         table=SPOT_TABLE,
         filters={COL_CODE: symbol},
@@ -111,11 +143,9 @@ def get_stock_spot_row(symbol: str, ttl_seconds: int = 600) -> Optional[pd.Serie
         row.pop("缓存时间", None)
         return pd.Series(row)
 
-    df = _call_with_retry(
-        lambda: ak.stock_bid_ask_em(symbol=symbol),
-        SPOT_TABLE,
-    )
+    df = _call_spot_quote(symbol)
     if df is None or df.empty:
+        _failure_cache[symbol] = time.monotonic()
         return None
 
     row_dict = {COL_CODE: symbol}
@@ -125,6 +155,7 @@ def get_stock_spot_row(symbol: str, ttl_seconds: int = 600) -> Optional[pd.Serie
             row_dict[_BID_ASK_FIELD_MAP[item]] = r["value"]
 
     if "最新价" not in row_dict:
+        _failure_cache[symbol] = time.monotonic()
         return None
 
     cache.upsert_records(

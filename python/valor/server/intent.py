@@ -133,7 +133,6 @@ async def classify_intent(query: str) -> IntentResult:
             messages=messages,
             temperature=0.0,
             max_tokens=256,
-            response_format={"type": "json_object"},
         )
     except Exception as exc:
         logger.warning(f"Intent classifier LLM call failed: {exc!r}; using fallback")

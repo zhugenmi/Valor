@@ -130,7 +130,9 @@ def test_stream_analysis_forwards_stage_callback_to_build_workflow(monkeypatch):
 
     monkeypatch.setattr("valor.agents.workflow.build_workflow", fake_build_workflow)
 
-    my_cb = lambda sub_key, payload: None
+    def my_cb(sub_key, payload):
+        pass
+
     list(stream_analysis(ticker="600519", stage_callback=my_cb))
 
     assert captured_callback == [my_cb]
