@@ -11,11 +11,13 @@ Defines the agent orchestration graph:
 License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial
 """
 
+import json
 import operator
 from typing import Annotated, Any, Callable, Dict, Iterator, List, Optional, TypedDict
 
 from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.graph import END, StateGraph
+from loguru import logger
 
 from valor.agents.bull_bear_debate import bull_bear_debate_agent
 from valor.agents.capital_sentiment import capital_sentiment_agent
@@ -205,10 +207,6 @@ _AGENT_MESSAGE_NAMES: Dict[str, str] = {
 }
 
 
-import json as _json
-from loguru import logger as _logger
-
-
 def _make_safe_agent_node(name: str, fn):
     """Wrap an agent node function so exceptions don't abort the whole workflow.
 
@@ -219,10 +217,10 @@ def _make_safe_agent_node(name: str, fn):
         try:
             return fn(state)
         except Exception as exc:
-            _logger.exception("agent {} failed", name)
+            logger.exception("agent {} failed", name)
             return {
                 "messages": [HumanMessage(
-                    content=_json.dumps({"error": str(exc)}),
+                    content=json.dumps({"error": str(exc)}),
                     name=_AGENT_MESSAGE_NAMES[name],
                 )],
                 "data": {},
