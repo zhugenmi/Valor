@@ -88,3 +88,36 @@ def test_coerce_filters_invalid_agent_keys():
     result2 = _coerce(raw2)
     assert result2.agents == []
     assert result2.intent == "full_analysis"
+
+
+async def _mock_multi_agent_chat(**_kwargs):
+    return ('{"intent": "single_analysis", "ticker": "600519", '
+            '"agents": ["technicals", "valuation"], "reply": null}')
+
+
+async def test_classify_intent_multi_agent():
+    """LLM 返回多 agent 时，classify_intent 应正确解析。"""
+    with patch("valor.server.intent.get_llm_provider") as mock_provider:
+        mock_provider.return_value.chat = AsyncMock(side_effect=_mock_multi_agent_chat)
+        result = await classify_intent("五粮液技术面和估值")
+    assert result.intent == "single_analysis"
+    assert result.ticker == "600519"
+    assert result.agents == ["technicals", "valuation"]
+
+
+async def test_fallback_regex_with_dimension_keywords():
+    """LLM 不可用时，正则降级应识别维度关键词。"""
+    with patch("valor.server.intent.get_llm_provider", side_effect=RuntimeError("no provider")):
+        result = await classify_intent("600519 估值 技术面")
+    assert result.intent == "single_analysis"
+    assert result.ticker == "600519"
+    assert set(result.agents) == {"valuation", "technicals"}
+
+
+async def test_fallback_regex_no_dimension_returns_full_analysis():
+    """LLM 不可用且无维度关键词时，回退 full_analysis。"""
+    with patch("valor.server.intent.get_llm_provider", side_effect=RuntimeError("no provider")):
+        result = await classify_intent("分析五粮液 000858")
+    assert result.intent == "full_analysis"
+    assert result.ticker == "000858"
+    assert result.agents == []

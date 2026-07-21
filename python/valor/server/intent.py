@@ -30,33 +30,61 @@ VALID_AGENTS = frozenset({
     "macro_industry",
 })
 
-_SYSTEM_PROMPT = """你是一个意图分类器，用于股票分析助手。分析用户输入，判断意图并提取信息。
+_SYSTEM_PROMPT = """你是 ValorAgent，一个 A 股投资分析助手的主编排器。分析用户输入，判断意图并提取信息。
 
 只输出JSON，不要任何额外文字或markdown标记。JSON格式：
-{"intent": "chat|full_analysis|single_analysis", "ticker": "6位股票代码或null", "agent": "technicals|fundamentals|valuation|capital_sentiment|macro_industry或null", "reply": "chat意图时的回复，否则null"}
+{"intent": "chat|full_analysis|single_analysis", "ticker": "6位股票代码或null", "agents": ["technicals","valuation",...], "reply": "chat意图时的回复，否则null"}
 
 意图规则：
 - chat：闲聊、问候、或非股票分析的问题（如"hi"、"你好"、"你是谁"、"谢谢"）。reply字段给出友好的中文回复。
-- full_analysis：用户要求全面分析某只股票（如"分析600519"、"贵州茅台值得买吗"、"600519怎么样"、"诊断股票600519"）。ticker提取6位A股代码。
-- single_analysis：用户只问某一方面：
-  - technicals：技术指标、K线、走势、买卖点（如"600519的技术指标"）
-  - fundamentals：基本面、财报、盈利能力（如"600519的财报"）
-  - valuation：估值、DCF、内在价值（如"600519估值高吗"）
-  - capital_sentiment：资金面、情绪、舆情、北向资金、龙虎榜（如"600519最近舆情"、"600519资金流"）
-  - macro_industry：宏观环境、行业前景、政策影响、宏观新闻（如"600519的宏观环境"、"最近宏观新闻"）
+- full_analysis：用户要求全面分析某只股票（如"分析600519"、"贵州茅台值得买吗"、"600519怎么样"、"诊断股票600519"）。ticker提取6位A股代码。agents为空数组。
+- single_analysis：用户只问某一方面或多方面组合。agents字段返回1-N个维度：
+  - technicals：技术指标、K线、走势、买卖点
+  - fundamentals：基本面、财报、盈利能力
+  - valuation：估值、DCF、内在价值
+  - capital_sentiment：资金面、情绪、舆情、北向资金、龙虎榜
+  - macro_industry：宏观环境、行业前景、政策影响、宏观新闻
 
 示例：
-输入"hi" -> {"intent":"chat","ticker":null,"agent":null,"reply":"你好！请提供股票代码（如600519），我可以帮您分析。"}
-输入"分析600519" -> {"intent":"full_analysis","ticker":"600519","agent":null,"reply":null}
-输入"600519的技术指标怎么样" -> {"intent":"single_analysis","ticker":"600519","agent":"technicals","reply":null}
-输入"看看茅台的估值" -> {"intent":"single_analysis","ticker":"600519","agent":"valuation","reply":null}
-输入"最近宏观新闻" -> {"intent":"single_analysis","ticker":null,"agent":"macro_industry","reply":null}
-输入"600519资金面怎么样" -> {"intent":"single_analysis","ticker":"600519","agent":"capital_sentiment","reply":null}
-输入"诊断股票600519" -> {"intent":"full_analysis","ticker":"600519","agent":null,"reply":null}"""
+输入"hi" -> {"intent":"chat","ticker":null,"agents":[],"reply":"你好！请提供股票代码（如600519），我可以帮您分析。"}
+输入"分析600519" -> {"intent":"full_analysis","ticker":"600519","agents":[],"reply":null}
+输入"600519的技术指标怎么样" -> {"intent":"single_analysis","ticker":"600519","agents":["technicals"],"reply":null}
+输入"五粮液技术面和估值" -> {"intent":"single_analysis","ticker":"000858","agents":["technicals","valuation"],"reply":null}
+输入"600519基本面技术面估值" -> {"intent":"single_analysis","ticker":"600519","agents":["fundamentals","technicals","valuation"],"reply":null}
+输入"最近宏观新闻" -> {"intent":"single_analysis","ticker":null,"agents":["macro_industry"],"reply":null}
+输入"诊断股票600519" -> {"intent":"full_analysis","ticker":"600519","agents":[],"reply":null}"""
 
 _TICKER_RE = re.compile(r"(?<!\d)[0-6]\d{5}(?!\d)")
 
+_DIMENSION_KEYWORDS: list[tuple[str, str]] = [
+    ("technicals", r"技术面|技术指标|K线|走势|买卖点"),
+    ("fundamentals", r"基本面|财报|盈利能力|财务"),
+    ("valuation", r"估值|DCF|内在价值"),
+    ("capital_sentiment", r"资金面|情绪|舆情|北向资金|龙虎榜"),
+    ("macro_industry", r"宏观|行业|政策|宏观新闻"),
+]
+
 _DEFAULT_CHAT_REPLY = "您好，请提供股票代码（如600519）以进行分析。"
+
+
+def _fallback(query: str) -> IntentResult:
+    """Regex-based fallback when the LLM classifier is unavailable."""
+    m = _TICKER_RE.search(query)
+    ticker = m.group(0) if m else None
+
+    agents: list[str] = []
+    for agent_key, pattern in _DIMENSION_KEYWORDS:
+        if re.search(pattern, query):
+            agents.append(agent_key)
+
+    if ticker and agents:
+        return IntentResult(intent="single_analysis", ticker=ticker, agents=agents)
+    if ticker:
+        return IntentResult(intent="full_analysis", ticker=ticker, agents=[])
+    if agents:
+        # 无 ticker 但有维度（如纯宏观问题）
+        return IntentResult(intent="single_analysis", ticker=None, agents=agents)
+    return IntentResult(intent="chat", reply=_DEFAULT_CHAT_REPLY)
 
 
 @dataclass
@@ -76,14 +104,6 @@ class IntentResult:
     def agent(self) -> str | None:
         """Backward compat: 返回首个 agent 或 None。"""
         return self.agents[0] if self.agents else None
-
-
-def _fallback(query: str) -> IntentResult:
-    """Regex-based fallback when the LLM classifier is unavailable."""
-    m = _TICKER_RE.search(query)
-    if m:
-        return IntentResult(intent="full_analysis", ticker=m.group(0))
-    return IntentResult(intent="chat", reply=_DEFAULT_CHAT_REPLY)
 
 
 def _coerce(raw: dict) -> IntentResult:
