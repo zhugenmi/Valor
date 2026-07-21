@@ -260,12 +260,13 @@ async def agent_stream(body: dict):
         # User message
         _msg_seq = 0
 
-        def _persist(role: str, event_type: str, content: str) -> None:
+        def _persist(role: str, event_type: str, content: str, msg_id: str | None = None) -> None:
             nonlocal _msg_seq
             _msg_seq += 1
             append_message(ConversationMessage(
-                id=f"msg-{uuid.uuid4()}",
+                id=msg_id or f"msg-{uuid.uuid4()}",
                 conversation_id=conversation_id,
+                thread_id=thread_id,
                 role=role,
                 event_type=event_type,
                 content=content,
@@ -278,16 +279,20 @@ async def agent_stream(body: dict):
         #    is an append event, so emitting user-first puts it at items[0]
         #    while the agent reply later appends to the empty thread_started
         #    item at items[1].
+        #    Use the same id for SSE and DB so the frontend can dedupe by item_id
+        #    when replaying history (otherwise SSE user-xxx and DB msg-yyy would
+        #    render as two separate messages).
+        user_msg_id = f"msg-{uuid.uuid4()}"
         yield _sse("message", {
             "role": "user",
             "conversation_id": conversation_id,
             "thread_id": thread_id,
             "task_id": "",
-            "item_id": f"user-{uuid.uuid4()}",
+            "item_id": user_msg_id,
             "metadata": {},
             "payload": {"content": query},
         })
-        _persist("user", "message", query)
+        _persist("user", "message", query, msg_id=user_msg_id)
 
         # 3. thread_started
         yield _sse("thread_started", {
@@ -302,6 +307,7 @@ async def agent_stream(body: dict):
 
         # Only ValorAgent supports the LangGraph workflow for now
         if agent_name != "ValorAgent":
+            reply = f"Agent '{agent_name}' is not yet implemented."
             yield _sse("message", {
                 "role": "agent",
                 "conversation_id": conversation_id,
@@ -309,8 +315,9 @@ async def agent_stream(body: dict):
                 "task_id": "",
                 "item_id": "",
                 "metadata": {},
-                "payload": {"content": f"Agent '{agent_name}' is not yet implemented."},
+                "payload": {"content": reply},
             })
+            _persist("assistant", "message", reply)
             yield _sse("done", {"conversation_id": conversation_id, "thread_id": thread_id})
             return
 
@@ -319,6 +326,7 @@ async def agent_stream(body: dict):
 
         # Chat: reply without running any workflow
         if intent.intent == "chat":
+            reply = intent.reply or "您好，请提供股票代码以进行分析。"
             yield _sse("message", {
                 "role": "agent",
                 "conversation_id": conversation_id,
@@ -326,13 +334,15 @@ async def agent_stream(body: dict):
                 "task_id": "",
                 "item_id": "",
                 "metadata": {},
-                "payload": {"content": intent.reply or "您好，请提供股票代码以进行分析。"},
+                "payload": {"content": reply},
             })
+            _persist("assistant", "message", reply)
             yield _sse("done", {"conversation_id": conversation_id, "thread_id": thread_id})
             return
 
         ticker = intent.ticker
         if not ticker:
+            reply = "无法识别股票代码，请提供6位A股代码（如600519）。"
             yield _sse("message", {
                 "role": "agent",
                 "conversation_id": conversation_id,
@@ -340,8 +350,9 @@ async def agent_stream(body: dict):
                 "task_id": "",
                 "item_id": "",
                 "metadata": {},
-                "payload": {"content": "无法识别股票代码，请提供6位A股代码（如600519）。"},
+                "payload": {"content": reply},
             })
+            _persist("assistant", "message", reply)
             yield _sse("done", {"conversation_id": conversation_id, "thread_id": thread_id})
             return
 
@@ -357,7 +368,7 @@ async def agent_stream(body: dict):
             # Run the synchronous workflow in a thread pool so the stream stays alive
             from valor.agents.workflow import (
                 agent_message_name,
-                run_single_agent,
+                run_agents,
             )
 
             loop = asyncio.get_event_loop()
@@ -365,9 +376,9 @@ async def agent_stream(body: dict):
                 target_name = agent_message_name(intent.agent)
                 result = await loop.run_in_executor(
                     None,
-                    lambda: run_single_agent(
+                    lambda: run_agents(
                         ticker=ticker,
-                        agent_name=intent.agent,
+                        agent_names=[intent.agent],
                         start_date=start_date,
                         end_date=end_date,
                     ),

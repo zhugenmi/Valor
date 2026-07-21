@@ -205,26 +205,32 @@ _AGENT_MESSAGE_NAMES: Dict[str, str] = {
 }
 
 
-def build_single_agent_workflow(agent_name: str) -> StateGraph:
-    """Build a workflow that runs market_data + one analysis agent.
+def build_agents_workflow(agent_names: list[str]) -> StateGraph:
+    """Build a workflow that runs market_data + N analysis agents in parallel.
 
     Args:
-        agent_name: One of the keys in ``_AGENT_NODES``.
+        agent_names: 1-N keys from ``_AGENT_NODES`` (e.g. ["technicals", "valuation"]).
 
     Returns:
-        An uncompiled StateGraph with two nodes: ``market_data`` -> ``selected_agent`` -> END.
+        An uncompiled StateGraph: ``market_data -> [agent1, agent2, ...] -> END``
+        (fan-out parallel execution).
     """
-    if agent_name not in _AGENT_NODES:
-        raise ValueError(
-            f"Unknown agent '{agent_name}'. Valid: {sorted(_AGENT_NODES.keys())}"
-        )
+    if not agent_names:
+        raise ValueError("agent_names must not be empty")
+    for name in agent_names:
+        if name not in _AGENT_NODES:
+            raise ValueError(
+                f"Unknown agent '{name}'. Valid: {sorted(_AGENT_NODES.keys())}"
+            )
 
     workflow = StateGraph(GraphState)
     workflow.add_node("market_data", _run_market_data)
-    workflow.add_node("selected_agent", _AGENT_NODES[agent_name])
+    for name in agent_names:
+        workflow.add_node(name, _AGENT_NODES[name])
     workflow.set_entry_point("market_data")
-    workflow.add_edge("market_data", "selected_agent")
-    workflow.add_edge("selected_agent", END)
+    for name in agent_names:
+        workflow.add_edge("market_data", name)  # fan-out parallel
+        workflow.add_edge(name, END)
     return workflow
 
 
@@ -359,20 +365,20 @@ def stream_analysis(
         yield chunk
 
 
-def run_single_agent(
+def run_agents(
     ticker: str,
-    agent_name: str,
+    agent_names: list[str],
     start_date: str | None = None,
     end_date: str | None = None,
     show_reasoning: bool = False,
     model: str = "openai",
     **kwargs: Any,
 ) -> Dict[str, Any]:
-    """Run market_data + a single analysis agent for a ticker.
+    """Run market_data + N analysis agents in parallel for a ticker.
 
     Args:
         ticker: A-share ticker, e.g. "600519"
-        agent_name: One of the keys in ``_AGENT_NODES`` (e.g. "technicals")
+        agent_names: 1-N keys from ``_AGENT_NODES`` (e.g. ["technicals", "valuation"])
         start_date: Analysis start date (YYYY-MM-DD)
         end_date: Analysis end date (YYYY-MM-DD)
         show_reasoning: Whether to include reasoning in output
@@ -380,7 +386,8 @@ def run_single_agent(
         **kwargs: Additional state metadata
 
     Returns:
-        Final state dict from the workflow.
+        Final state dict from the workflow. ``state["messages"]`` contains
+        HumanMessages from each agent, identifiable by ``msg.name``.
     """
     initial_state: GraphState = {
         "messages": [
@@ -402,7 +409,7 @@ def run_single_agent(
         },
     }
 
-    app = build_single_agent_workflow(agent_name)
+    app = build_agents_workflow(agent_names)
     compiled = app.compile()
 
     result = compiled.invoke(initial_state)

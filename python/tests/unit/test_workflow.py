@@ -78,3 +78,46 @@ def test_workflow_edges_connect():
     assert "bull_bear_debate" in node_names
     assert "risk_manager" in node_names
     assert "portfolio_manager" in node_names
+
+
+def test_build_agents_workflow_single_agent():
+    """单 agent 子图应包含 market_data + 1 个 agent 节点。"""
+    from valor.agents.workflow import build_agents_workflow
+
+    wf = build_agents_workflow(["technicals"])
+    compiled = wf.compile()
+    node_names = list(compiled.nodes.keys())
+    assert "market_data" in node_names
+    assert "technicals" in node_names
+    assert len(node_names) == 3  # market_data + technicals + __start__
+
+
+def test_build_agents_workflow_multi_agent():
+    """多 agent 子图应包含 market_data + N 个 agent 节点。"""
+    from valor.agents.workflow import build_agents_workflow
+
+    wf = build_agents_workflow(["technicals", "valuation"])
+    compiled = wf.compile()
+    node_names = list(compiled.nodes.keys())
+    assert "market_data" in node_names
+    assert "technicals" in node_names
+    assert "valuation" in node_names
+    assert len(node_names) == 4  # market_data + 2 agents + __start__
+
+
+def test_build_agents_workflow_invalid_agent_raises():
+    """无效 agent key 应抛 ValueError。"""
+    import pytest
+    from valor.agents.workflow import build_agents_workflow
+
+    with pytest.raises(ValueError, match="Unknown agent"):
+        build_agents_workflow(["invalid_agent"])
+
+
+def test_build_agents_workflow_empty_list_raises():
+    """空 agent 列表应抛 ValueError。"""
+    import pytest
+    from valor.agents.workflow import build_agents_workflow
+
+    with pytest.raises(ValueError):
+        build_agents_workflow([])
