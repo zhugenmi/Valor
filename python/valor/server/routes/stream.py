@@ -17,7 +17,7 @@ from typing import AsyncGenerator
 from fastapi import APIRouter
 from starlette.responses import StreamingResponse
 
-from valor.agents.workflow import stream_analysis
+from valor.agents.workflow import agent_message_name, run_agents, stream_analysis
 from valor.conversations.models import Conversation, ConversationMessage
 from valor.conversations.storage import (
     append_message,
@@ -26,7 +26,7 @@ from valor.conversations.storage import (
 )
 from valor.portfolio.storage import PortfolioNotFound
 from valor.server.data_preflight import ensure_latest_trading_day_data
-from valor.server.intent import classify_intent
+from valor.server.intent import VALID_AGENTS, classify_intent
 from valor.server.portfolio_context import load_portfolio_context
 
 router = APIRouter(prefix="/api/v1", tags=["Stream"])
@@ -365,37 +365,53 @@ async def agent_stream(body: dict):
         })
 
         try:
-            # Run the synchronous workflow in a thread pool so the stream stays alive
-            from valor.agents.workflow import (
-                agent_message_name,
-                run_agents,
-            )
-
             loop = asyncio.get_event_loop()
             if intent.intent == "single_analysis":
-                target_name = agent_message_name(intent.agent)
-                result = await loop.run_in_executor(
-                    None,
-                    lambda: run_agents(
-                        ticker=ticker,
-                        agent_names=[intent.agent],
-                        start_date=start_date,
-                        end_date=end_date,
-                    ),
-                )
+                agent_names = list(intent.agents)
+                # 过滤无效 key（_coerce 已过滤，这里防御性再过滤一次）
+                agent_names = [n for n in agent_names if n in VALID_AGENTS]
+                if not agent_names:
+                    # fallback 到 full_analysis
+                    intent.intent = "full_analysis"
+                else:
+                    result = await loop.run_in_executor(
+                        None,
+                        lambda: run_agents(
+                            ticker=ticker,
+                            agent_names=agent_names,
+                            start_date=start_date,
+                            end_date=end_date,
+                        ),
+                    )
+                    for name in agent_names:
+                        target_name = agent_message_name(name)
+                        final_message = None
+                        for msg in reversed(result.get("messages", [])):
+                            if getattr(msg, "name", None) == target_name:
+                                final_message = msg
+                                break
+                        if final_message is None:
+                            continue
+                        try:
+                            content = json.loads(final_message.content)
+                        except (json.JSONDecodeError, TypeError):
+                            content = {"raw": str(final_message.content)}
 
-                # Extract the target agent's final message
-                final_message = None
-                for msg in reversed(result.get("messages", [])):
-                    if hasattr(msg, "name") and msg.name == target_name:
-                        final_message = msg
-                        break
+                        # 检测失败（_make_safe_agent_node 包装的异常）
+                        if isinstance(content, dict) and "error" in content:
+                            yield _sse("agent_failed", {
+                                "conversation_id": conversation_id,
+                                "thread_id": thread_id,
+                                "agent": name,
+                                "error": content["error"],
+                            })
+                            _persist("system", "agent_failed",
+                                     json.dumps({"agent": name, "error": content["error"]},
+                                                ensure_ascii=False))
+                            continue
 
-                if final_message:
-                    try:
-                        content = json.loads(final_message.content)
-                        payload = json.dumps(
-                            {"ticker": ticker, "decision": content},
+                        payload_json = json.dumps(
+                            {"ticker": ticker, "agent": name, "decision": content},
                             ensure_ascii=False,
                         )
                         yield _sse("component_generator", {
@@ -403,45 +419,16 @@ async def agent_stream(body: dict):
                             "conversation_id": conversation_id,
                             "thread_id": thread_id,
                             "task_id": "",
-                            "item_id": "",
-                            "metadata": {},
+                            "item_id": f"agent-{name}-{uuid.uuid4()}",
+                            "metadata": {"agent_name": name},
                             "payload": {
                                 "component_type": "markdown",
-                                "content": payload,
+                                "content": payload_json,
                             },
                         })
-                    except (json.JSONDecodeError, TypeError):
-                        yield _sse("message", {
-                            "role": "agent",
-                            "conversation_id": conversation_id,
-                            "thread_id": thread_id,
-                            "task_id": "",
-                            "item_id": "",
-                            "metadata": {},
-                            "payload": {"content": str(final_message.content)},
-                        })
-                else:
-                    # Dump all agent outputs as markdown
-                    lines = []
-                    for msg in result.get("messages", []):
-                        name = getattr(msg, "name", "unknown")
-                        try:
-                            lines.append(f"**{name}**: {json.dumps(json.loads(msg.content), ensure_ascii=False, indent=2)}")
-                        except Exception:
-                            lines.append(f"**{name}**: {msg.content}")
-                    yield _sse("component_generator", {
-                        "role": "agent",
-                        "conversation_id": conversation_id,
-                        "thread_id": thread_id,
-                        "task_id": "",
-                        "item_id": "",
-                        "metadata": {},
-                        "payload": {
-                            "component_type": "markdown",
-                            "content": "\n\n".join(lines),
-                        },
-                    })
-            else:  # full_analysis - new streaming path
+                        _persist("assistant", "component_generator", payload_json)
+
+            if intent.intent == "full_analysis":
                 # Resolve portfolio context (real holdings if portfolio_id provided)
                 if portfolio_id and request_ticker:
                     try:

@@ -374,3 +374,127 @@ def test_bull_bear_debate_emits_three_sub_events(client, monkeypatch):
     assert "bull_bear_debate.bear" in agent_names
     assert "bull_bear_debate.verdict" in agent_names
     assert "bull_bear_debate" not in agent_names  # parent doesn't emit its own event
+
+
+async def _single_multi_agent_intent(query):
+    return IntentResult(
+        intent="single_analysis",
+        ticker="600519",
+        agents=["technicals", "valuation"],
+    )
+
+
+def _make_fake_run_agents_multi():
+    """Fake run_agents returning messages for technicals + valuation."""
+    from types import SimpleNamespace
+    def _fake(**_kwargs):
+        return {
+            "messages": [
+                SimpleNamespace(
+                    name="technical_analyst_agent",
+                    content='{"signal": "buy", "confidence": 0.7}',
+                ),
+                SimpleNamespace(
+                    name="valuation_agent",
+                    content='{"intrinsic_value": 1800, "margin_of_safety": 0.1}',
+                ),
+            ],
+            "data": {},
+            "metadata": {},
+        }
+    return _fake
+
+
+def test_sse_single_analysis_multi_agent_emits_component_generator_per_agent(
+    client, monkeypatch
+):
+    """single_analysis 多 agent 应为每个 agent yield 一个 component_generator，item_id 唯一。"""
+    monkeypatch.setattr("valor.server.routes.stream.classify_intent", _single_multi_agent_intent)
+    monkeypatch.setattr("valor.server.routes.stream.run_agents", _make_fake_run_agents_multi())
+
+    r = client.post(
+        "/api/v1/agents/stream",
+        json={"query": "五粮液技术面和估值", "agent_name": "ValorAgent"},
+    )
+    assert r.status_code == 200
+    events = _parse_events(r.text)
+    component_events = [e for e in events if e["event"] == "component_generator"]
+    assert len(component_events) == 2
+
+    item_ids = [e["data"]["item_id"] for e in component_events]
+    assert len(set(item_ids)) == 2  # 唯一
+
+    # metadata 带 agent_name
+    agent_names = [e["data"]["metadata"]["agent_name"] for e in component_events]
+    assert set(agent_names) == {"technicals", "valuation"}
+
+
+async def _single_empty_agents_intent(query):
+    return IntentResult(intent="single_analysis", ticker="600519", agents=[])
+
+
+def test_sse_single_analysis_empty_agents_falls_back_to_full_analysis(
+    client, monkeypatch
+):
+    """agents=[] 时应回退到 full_analysis（yield workflow_started）。"""
+    monkeypatch.setattr("valor.server.routes.stream.classify_intent", _single_empty_agents_intent)
+    fake_chunks = [
+        {"market_data": {"data": {"ticker": "600519"}}},
+        {"portfolio_manager": {
+            "messages": [SimpleNamespace(
+                name="portfolio_management_agent",
+                content='{"action": "hold", "quantity": 0}',
+            )]
+        }},
+    ]
+    monkeypatch.setattr("valor.server.routes.stream.stream_analysis", _make_fake_stream(fake_chunks))
+
+    r = client.post(
+        "/api/v1/agents/stream",
+        json={"query": "五粮液", "agent_name": "ValorAgent"},
+    )
+    assert r.status_code == 200
+    events = _parse_events(r.text)
+    types = [e["event"] for e in events]
+    assert "workflow_started" in types
+
+
+def _make_fake_run_agents_with_failure():
+    """Fake run_agents where technicals failed, valuation succeeded."""
+    from types import SimpleNamespace
+    def _fake(**_kwargs):
+        return {
+            "messages": [
+                SimpleNamespace(
+                    name="technical_analyst_agent",
+                    content='{"error": "data fetch failed"}',
+                ),
+                SimpleNamespace(
+                    name="valuation_agent",
+                    content='{"intrinsic_value": 1800}',
+                ),
+            ],
+            "data": {},
+            "metadata": {},
+        }
+    return _fake
+
+
+def test_sse_single_analysis_failed_agent_emits_agent_failed(client, monkeypatch):
+    """失败的 agent 应 yield agent_failed，其他 agent 仍 component_generator。"""
+    monkeypatch.setattr("valor.server.routes.stream.classify_intent", _single_multi_agent_intent)
+    monkeypatch.setattr("valor.server.routes.stream.run_agents", _make_fake_run_agents_with_failure())
+
+    r = client.post(
+        "/api/v1/agents/stream",
+        json={"query": "五粮液技术面和估值", "agent_name": "ValorAgent"},
+    )
+    assert r.status_code == 200
+    events = _parse_events(r.text)
+    failed_events = [e for e in events if e["event"] == "agent_failed"]
+    component_events = [e for e in events if e["event"] == "component_generator"]
+
+    assert len(failed_events) == 1
+    assert failed_events[0]["data"]["agent"] == "technicals"
+    assert len(component_events) == 1
+    assert component_events[0]["data"]["metadata"]["agent_name"] == "valuation"
