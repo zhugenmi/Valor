@@ -15,15 +15,6 @@ router = APIRouter(prefix="/api/v1", tags=["Stubs"])
 AGENTS_LIST = {
     "agents": [
         {
-            "agent_name": "ValorAgent",
-            "display_name": "Valor Agent",
-            "enabled": True,
-            "description": "Valor Agent coordinates stock analysis agents for A-share investment research",
-            "created_at": "2026-01-01T00:00:00Z",
-            "updated_at": "2026-01-01T00:00:00Z",
-            "agent_metadata": {"version": "1.0.0", "author": "Valor", "tags": ["valor", "super-agent"]},
-        },
-        {
             "agent_name": "sentiment_analysis",
             "display_name": "情绪分析",
             "enabled": True,
