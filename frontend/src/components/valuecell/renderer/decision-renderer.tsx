@@ -46,6 +46,9 @@ const DecisionRenderer: FC<DecisionRendererProps> = ({ content }) => {
   const config = ACTION_CONFIG[parsed.action];
   const ActionIcon = config.icon;
   const quantity = parsed.quantity ?? 0;
+  const currentPosition = parsed.current_position ?? 0;
+  const isWatching = parsed.action === "hold" && currentPosition === 0;
+  const actionLabel = isWatching ? "观望" : config.label;
   const confidencePct = Math.round(
     Math.min(Math.max(parsed.confidence ?? 0, 0), 1) * 100,
   );
@@ -78,7 +81,7 @@ const DecisionRenderer: FC<DecisionRendererProps> = ({ content }) => {
           <p
             className={cn("font-semibold text-lg leading-6", config.textClass)}
           >
-            {config.label}
+            {actionLabel}
           </p>
           <p className="text-muted-foreground text-xs leading-4">
             {quantityLabel}

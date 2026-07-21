@@ -366,15 +366,18 @@
     "suggestions": {
       "research": {
         "title": "Deep Research",
-        "description": "Analyze SEC filings to generate in-depth stock interpretation reports."
+        "description": "Analyze SEC filings to generate in-depth stock interpretation reports.",
+        "preset": "Please help me do an in-depth analysis of an A-share stock, e.g. Kweichow Moutai (600519)"
       },
       "strategy": {
         "title": "Automated Trading",
-        "description": "Multi-strategy smart trading, automatically execute your strategies."
+        "description": "Multi-strategy smart trading, automatically execute your strategies.",
+        "preset": "Please help me diagnose my portfolio holdings"
       },
       "news": {
         "title": "Pushing News",
-        "description": "Personalized news updates on a custom schedule."
+        "description": "Personalized news updates on a custom schedule.",
+        "preset": "What are the key market updates for A-shares today?"
       }
     }
   }

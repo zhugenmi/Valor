@@ -204,12 +204,18 @@ function processSSEEvent(draft: AgentConversationsStore, sseData: SSEData) {
     }
 
     case "thread_started":
-    case "message_chunk":
     case "message":
     case "task_failed":
     case "plan_failed":
     case "plan_require_user_input":
-      // Other events are set as markdown type
+      // Complete messages: replace if item_id already exists (e.g. SSE event
+      // already added it, then history replay arrives with same item_id).
+      // Using "append" here would concatenate content ("hi" + "hi" = "hihi").
+      handleChatItemEvent(draft, { component_type: "markdown", ...data }, "replace");
+      break;
+
+    case "message_chunk":
+      // Streaming chunks: append to build up content incrementally.
       handleChatItemEvent(draft, { component_type: "markdown", ...data });
       break;
 

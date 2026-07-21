@@ -26,16 +26,32 @@ def valuation_agent(state: AgentState):
         'working_capital') or 0) - (previous_financial_line_item.get('working_capital') or 0)
 
     # Owner Earnings Valuation (Buffett Method)
-    owner_earnings_value = calculate_owner_earnings_value(
-        net_income=current_financial_line_item.get('net_income'),
-        depreciation=current_financial_line_item.get(
-            'depreciation_and_amortization'),
-        capex=current_financial_line_item.get('capital_expenditure'),
-        working_capital_change=working_capital_change,
-        growth_rate=metrics["earnings_growth"],
-        required_return=0.15,
-        margin_of_safety=0.25
-    )
+    # 当折旧摊销数据缺失(=0,部分股票如 601728 用直接法编制现金流量表,无此调节项)时,
+    # 用自由现金流作为所有者收益基础。数学等价:
+    #   owner_earnings = net_income + depreciation - capex - working_capital_change
+    #   free_cash_flow = 经营现金流 - capex = net_income + depreciation - working_capital_change - capex
+    # 因此 FCF ≡ owner_earnings,直接用 FCF 作为输入即可。
+    depreciation = current_financial_line_item.get('depreciation_and_amortization') or 0
+    if depreciation == 0:
+        owner_earnings_value = calculate_owner_earnings_value(
+            net_income=current_financial_line_item.get('free_cash_flow'),
+            depreciation=0,
+            capex=0,
+            working_capital_change=0,
+            growth_rate=metrics["earnings_growth"],
+            required_return=0.15,
+            margin_of_safety=0.25
+        )
+    else:
+        owner_earnings_value = calculate_owner_earnings_value(
+            net_income=current_financial_line_item.get('net_income'),
+            depreciation=depreciation,
+            capex=current_financial_line_item.get('capital_expenditure'),
+            working_capital_change=working_capital_change,
+            growth_rate=metrics["earnings_growth"],
+            required_return=0.15,
+            margin_of_safety=0.25
+        )
 
     # DCF Valuation
     dcf_value = calculate_intrinsic_value(
@@ -63,18 +79,27 @@ def valuation_agent(state: AgentState):
 
     reasoning["dcf_analysis"] = {
         "signal": "bullish" if dcf_gap > 0.10 else "bearish" if dcf_gap < -0.20 else "neutral",
-        "details": f"Intrinsic Value: ${dcf_value:,.2f}, Market Cap: {'N/A' if market_cap_value <= 0 else f'${market_cap_value:,.2f}'}, Gap: {dcf_gap:.1%}"
+        "details": f"Intrinsic Value: {dcf_value:,.2f} CNY, Market Cap: {'N/A' if market_cap_value <= 0 else f'{market_cap_value:,.2f} CNY'}, Gap: {dcf_gap:.1%}"
     }
 
     reasoning["owner_earnings_analysis"] = {
         "signal": "bullish" if owner_earnings_gap > 0.10 else "bearish" if owner_earnings_gap < -0.20 else "neutral",
-        "details": f"Owner Earnings Value: ${owner_earnings_value:,.2f}, Market Cap: {'N/A' if market_cap_value <= 0 else f'${market_cap_value:,.2f}'}, Gap: {owner_earnings_gap:.1%}"
+        "details": f"Owner Earnings Value: {owner_earnings_value:,.2f} CNY, Market Cap: {'N/A' if market_cap_value <= 0 else f'{market_cap_value:,.2f} CNY'}, Gap: {owner_earnings_gap:.1%}"
     }
 
     message_content = {
         "signal": signal,
         "confidence": f"{abs(valuation_gap):.0%}",
-        "reasoning": reasoning
+        "reasoning": reasoning,
+        # 显式 evidence 字段: 供下游 LLM agent 引用具体估值数值
+        "evidence": {
+            "dcf_value": float(dcf_value or 0),
+            "owner_earnings_value": float(owner_earnings_value or 0),
+            "market_cap": float(market_cap_value or 0),
+            "dcf_gap": float(dcf_gap or 0),
+            "owner_earnings_gap": float(owner_earnings_gap or 0),
+            "valuation_gap": float(valuation_gap or 0),
+        },
     }
 
     message = HumanMessage(

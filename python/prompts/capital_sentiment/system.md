@@ -14,6 +14,10 @@
   "institutional_activity": "<active|neutral|quiet>",
   "turnover_analysis": "<换手率/成交额分析，中文>",
   "risk_flags": ["<减持/解禁风险红旗，无则空数组>"],
+  "evidence": [
+    {"indicator": "<指标名>", "value": "<具体数值或描述>", "source": "<新闻标题+日期>"},
+    {"indicator": "<指标名>", "value": "<具体数值或描述>", "source": "<新闻标题+日期>"}
+  ],
   "reasoning": "<综合推理，需引用至少2个具体证据>"
 }
 
@@ -23,9 +27,11 @@
 - institutional_activity: 机构活跃度
 - turnover_analysis: 中文换手率/成交分析
 - risk_flags: 减持/解禁风险红旗列表，若无则返回空数组 []
-- reasoning: 中文综合推理，必须引用至少2个具体证据
+- evidence: 关键证据数组，每条必须包含 indicator（指标名，如"北向资金净买入"）、value（具体数值或描述）、source（新闻标题+日期，如"《XX公司获北向资金加仓》2026-07-15"），至少2条
+- reasoning: 中文综合推理，必须引用至少2个具体证据（数据点或新闻标题）
 
 要求：
 - 完全基于提供的新闻数据，若新闻极少也要说明信息不足
 - 不可空泛而谈，每个判断需有具体依据
+- evidence 数组中的 source 字段必须引用具体新闻标题和日期，不可只写"新闻"
 - 若无法判断某字段，用 "neutral" / "quiet" / 空数组兜底

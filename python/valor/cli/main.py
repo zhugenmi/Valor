@@ -15,20 +15,13 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from loguru import logger
 
-from valor.adapters.data.akshare_adapter import AkShareAdapter
-from valor.adapters.data.baostock_adapter import BaoStockAdapter
+from valor.adapters.data.factory import build_data_router
 from valor.adapters.data.router import DataRouter
 
 
 def get_data_router() -> DataRouter:
-    """Construct the default DataRouter (AkShare primary, BaoStock fallback for history)."""
-    akshare = AkShareAdapter()
-    baostock = BaoStockAdapter()
-    return DataRouter(
-        primary=akshare,
-        sources={"akshare": akshare, "baostock": baostock},
-        fallbacks_by_method={"get_daily_history": ["baostock"]},
-    )
+    """Construct the default DataRouter (shared with server)."""
+    return build_data_router()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

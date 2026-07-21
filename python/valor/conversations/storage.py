@@ -13,7 +13,8 @@ def create_conversation(conv: Conversation) -> None:
         conn.execute(
             """INSERT INTO conversations
                (id, agent_name, title, status, portfolio_id, ticker, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO NOTHING""",
             (conv.id, conv.agent_name, conv.title, conv.status,
              conv.portfolio_id, conv.ticker, conv.created_at, conv.updated_at),
         )
@@ -23,9 +24,9 @@ def append_message(msg: ConversationMessage) -> None:
     with get_conn() as conn:
         conn.execute(
             """INSERT INTO conversation_messages
-               (id, conversation_id, role, event_type, content, created_at, seq)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (msg.id, msg.conversation_id, msg.role, msg.event_type,
+               (id, conversation_id, thread_id, role, event_type, content, created_at, seq)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (msg.id, msg.conversation_id, msg.thread_id, msg.role, msg.event_type,
              msg.content, msg.created_at, msg.seq),
         )
         conn.execute(

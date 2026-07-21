@@ -366,15 +366,18 @@
     "suggestions": {
       "research": {
         "title": "深度研究",
-        "description": "分析 SEC 文件，生成深度股票解读报告。"
+        "description": "分析 SEC 文件，生成深度股票解读报告。",
+        "preset": "请帮我深度分析一只 A 股股票，例如贵州茅台（600519）"
       },
       "strategy": {
         "title": "自动交易",
-        "description": "多策略智能交易，自动执行您的策略。"
+        "description": "多策略智能交易，自动执行您的策略。",
+        "preset": "请帮我诊断我的持仓组合"
       },
       "news": {
         "title": "新闻推送",
-        "description": "按自定义时间表推送个性化新闻更新。"
+        "description": "按自定义时间表推送个性化新闻更新。",
+        "preset": "今天 A 股市场有什么重要资讯？"
       }
     }
   }

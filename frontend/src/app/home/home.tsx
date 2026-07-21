@@ -35,18 +35,21 @@ function Home() {
 
   const { data: allPollTaskList } = useAllPollTaskList();
 
-  const handleAgentClick = (agentId: string) => {
-    navigate(`/agent/${agentId}`);
+  const handleAgentClick = (agentId: string, presetMessage?: string) => {
+    navigate(`/agent/ValorAgent`, {
+      state: { inputValue: presetMessage },
+    });
   };
 
   const isDark = resolvedTheme === "dark";
 
   const suggestions = [
     {
-      id: "ResearchAgent",
+      id: "ValorAgent-research",
       title: t("home.suggestions.research.title"),
       icon: <SvgIcon name={ResearchReport} />,
       description: t("home.suggestions.research.description"),
+      presetMessage: t("home.suggestions.research.preset"),
       bgColor: isDark
         ? "bg-gradient-to-r from-[#111827]/80 from-[5.05%] to-[#1D4ED8]/35 to-[100%]"
         : "bg-gradient-to-r from-[#FFFFFF]/70 from-[5.05%] to-[#E7EFFF]/70 to-[100%]",
@@ -55,10 +58,11 @@ function Home() {
       ),
     },
     {
-      id: "StrategyAgent",
+      id: "ValorAgent-strategy",
       title: t("home.suggestions.strategy.title"),
       icon: <SvgIcon name={AutoTrade} />,
       description: t("home.suggestions.strategy.description"),
+      presetMessage: t("home.suggestions.strategy.preset"),
       bgColor: isDark
         ? "bg-gradient-to-r from-[#111827]/80 from-[5.05%] to-[#7C3AED]/30 to-[100%]"
         : "bg-gradient-to-r from-[#FFFFFF]/70 from-[5.05%] to-[#EAE8FF]/70 to-[100%]",
@@ -67,10 +71,11 @@ function Home() {
       ),
     },
     {
-      id: "NewsAgent",
+      id: "ValorAgent-news",
       title: t("home.suggestions.news.title"),
       icon: <SvgIcon name={NewsPush} />,
       description: t("home.suggestions.news.description"),
+      presetMessage: t("home.suggestions.news.preset"),
       bgColor: isDark
         ? "bg-gradient-to-r from-[#111827]/80 from-[5.05%] to-[#DB2777]/25 to-[100%]"
         : "bg-gradient-to-r from-[#FFFFFF]/70 from-[5.05%] to-[#FFE7FD]/70 to-[100%]",
@@ -137,7 +142,8 @@ function Home() {
           <AgentSuggestionsList
             suggestions={suggestions.map((suggestion) => ({
               ...suggestion,
-              onClick: () => handleAgentClick(suggestion.id),
+              onClick: () =>
+                handleAgentClick(suggestion.id, suggestion.presetMessage),
             }))}
           />
         </section>

@@ -170,6 +170,19 @@ def technical_analyst_agent(state: AgentState):
                 "confidence": f"{round(stat_arb_signals['confidence'] * 100)}%",
                 "metrics": normalize_pandas(stat_arb_signals['metrics'])
             }
+        },
+        # 显式 evidence 字段: 供下游 LLM agent (bull_bear_debate,
+        # portfolio_manager) 引用具体指标数值,避免泛泛描述
+        "evidence": {
+            "adx": float(trend_signals['metrics'].get('adx', 0.0)),
+            "rsi_14": float(mean_reversion_signals['metrics'].get('rsi_14', 0.0)),
+            "momentum_1m": float(momentum_signals['metrics'].get('momentum_1m', 0.0)),
+            "momentum_3m": float(momentum_signals['metrics'].get('momentum_3m', 0.0)),
+            "momentum_6m": float(momentum_signals['metrics'].get('momentum_6m', 0.0)),
+            "historical_volatility": float(volatility_signals['metrics'].get('historical_volatility', 0.0)),
+            "volatility_regime": float(volatility_signals['metrics'].get('volatility_regime', 0.0)),
+            "hurst_exponent": float(stat_arb_signals['metrics'].get('hurst_exponent', 0.0)),
+            "skewness": float(stat_arb_signals['metrics'].get('skewness', 0.0)),
         }
     }
 

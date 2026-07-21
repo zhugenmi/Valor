@@ -56,7 +56,7 @@ def test_get_history(client):
     body = resp.json()
     assert body["data"]["conversation_id"] == "c1"
     assert len(body["data"]["items"]) == 1
-    assert body["data"]["items"][0]["content"] == "hi"
+    assert body["data"]["items"][0]["data"]["payload"]["content"] == "hi"
 
 
 def test_delete_conversation(client):

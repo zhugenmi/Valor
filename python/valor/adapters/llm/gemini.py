@@ -24,6 +24,7 @@ class GeminiProvider:
     ) -> None:
         self.api_key = api_key or os.getenv("VALOR_GEMINI_API_KEY", "")
         self.default_model = default_model
+        self.timeout = float(os.getenv("VALOR_LLM_TIMEOUT", "120"))
         logger.info(f"GeminiProvider initialized (default_model={self.default_model})")
 
     @property
@@ -69,7 +70,7 @@ class GeminiProvider:
         )
         logger.debug(f"Gemini API request: {url} (model={model_id})")
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
                 resp = await client.post(
                     url,

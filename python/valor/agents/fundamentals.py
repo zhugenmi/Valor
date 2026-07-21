@@ -139,6 +139,31 @@ def fundamentals_agent(state: AgentState):
         )
     }
 
+    # 5. Shareholder Return (Dividend Yield)
+    dividend_yield = metrics.get("dividend_yield", 0) or 0
+    payout_ratio = metrics.get("payout_ratio", 0) or 0
+
+    if dividend_yield >= 0.04:
+        dividend_signal = 'bullish'
+    elif dividend_yield >= 0.01:
+        dividend_signal = 'neutral'
+    else:
+        dividend_signal = 'bearish'
+
+    sustainability_note = ""
+    if payout_ratio > 0.8 and dividend_signal == 'bullish':
+        sustainability_note = " (支付率较高,关注可持续性)"
+
+    signals.append(dividend_signal)
+    reasoning["shareholder_return_signal"] = {
+        "signal": signals[4],
+        "details": (
+            f"股息率: {dividend_yield:.2%}" if dividend_yield else "股息率: N/A"
+        ) + ", " + (
+            f"股息支付率: {payout_ratio:.2%}" if payout_ratio else "股息支付率: N/A"
+        ) + sustainability_note,
+    }
+
     # Determine overall signal
     bullish_signals = signals.count('bullish')
     bearish_signals = signals.count('bearish')
@@ -159,6 +184,25 @@ def fundamentals_agent(state: AgentState):
         "confidence": f"{round(confidence * 100)}%",
         "reasoning": reasoning,
         "risk_flags": [],
+        # 显式 evidence 字段: 供下游 LLM agent 引用具体财务数值
+        "evidence": {
+            "return_on_equity": float(metrics.get("return_on_equity") or 0),
+            "net_margin": float(metrics.get("net_margin") or 0),
+            "operating_margin": float(metrics.get("operating_margin") or 0),
+            "revenue_growth": float(metrics.get("revenue_growth") or 0),
+            "earnings_growth": float(metrics.get("earnings_growth") or 0),
+            "book_value_growth": float(metrics.get("book_value_growth") or 0),
+            "current_ratio": float(metrics.get("current_ratio") or 0),
+            "debt_to_equity": float(metrics.get("debt_to_equity") or 0),
+            "free_cash_flow_per_share": float(metrics.get("free_cash_flow_per_share") or 0),
+            "earnings_per_share": float(metrics.get("earnings_per_share") or 0),
+            "pe_ratio": float(metrics.get("pe_ratio") or 0),
+            "price_to_book": float(metrics.get("price_to_book") or 0),
+            "price_to_sales": float(metrics.get("price_to_sales") or 0),
+            "dividend_yield": float(metrics.get("dividend_yield") or 0),
+            "book_value_per_share": float(metrics.get("book_value_per_share") or 0),
+            "payout_ratio": float(metrics.get("payout_ratio") or 0),
+        },
     }
 
     # Create the fundamental analysis message

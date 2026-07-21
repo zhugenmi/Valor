@@ -7,7 +7,7 @@ same baostock_history_k table without downstream changes.
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -62,6 +62,11 @@ def test_fetch_kline_via_akshare_maps_columns_to_internal_schema():
     assert df["turnover"].iloc[0] == pytest.approx(0.01)
     # amplitude stays as percent (matches _prepare_history_frame)
     assert df["amplitude"].iloc[0] == pytest.approx(6.0)
+    # volume: AkShare 成交量单位是"手",统一为"股"(* 100)与其他源对齐
+    # 原始 100000 手 -> 10000000 股
+    assert df["volume"].iloc[0] == pytest.approx(100000 * 100)
+    # amount: AkShare 成交额单位已是"元",无需转换
+    assert df["amount"].iloc[0] == pytest.approx(1020000)
     # date column is datetime
     assert pd.api.types.is_datetime64_any_dtype(df["date"])
 
@@ -378,3 +383,124 @@ def test_get_price_history_df_no_holiday_double_source_warnings(
     )
     # Specifically, 端午 6/19 must not appear in any warning
     assert "2026-06-19" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Tushare third-tier fallback (BaoStock -> AkShare -> Tushare)
+# ---------------------------------------------------------------------------
+
+
+def _fake_tushare_daily_df(trading_days: list[str]) -> pd.DataFrame:
+    """Mimic Tushare pro.daily() output. vol in 手, amount in 千元."""
+    n = len(trading_days)
+    return pd.DataFrame({
+        "ts_code": ["600519.SH"] * n,
+        "trade_date": [d.replace("-", "") for d in trading_days],
+        "open": [10.0] * n,
+        "high": [10.5] * n,
+        "low": [9.9] * n,
+        "close": [10.2] * n,
+        "pre_close": [10.0] * n,
+        "change": [0.2] * n,
+        "pct_chg": [2.0] * n,
+        "vol": [1000.0] * n,        # 手
+        "amount": [1020.0] * n,      # 千元
+    })
+
+
+def test_fetch_kline_via_tushare_maps_columns_and_units(temp_cache):
+    """Tushare daily fields map to unified schema with correct unit conversion."""
+    from valor.adapters.data.akshare_cache import _fetch_kline_via_tushare
+
+    fake_df = _fake_tushare_daily_df(["2026-07-15", "2026-07-16"])
+
+    mock_client = MagicMock()
+    mock_client.available = True
+    mock_client.query_daily = MagicMock(return_value=fake_df)
+
+    with patch("valor.adapters.data.akshare_cache._get_tushare_client",
+               return_value=mock_client):
+        df = _fetch_kline_via_tushare(
+            symbol="600519",
+            start_date="2026-07-15",
+            end_date="2026-07-16",
+            adjust="qfq",
+        )
+
+    expected_columns = {
+        "symbol", "adjust_flag", "date", "open", "high", "low", "close",
+        "volume", "amount", "amplitude", "pct_change", "change_amount", "turnover",
+    }
+    assert set(df.columns) == expected_columns
+    assert len(df) == 2
+    # Tushare adjust is unadjusted -> adjust_flag = ""
+    assert (df["adjust_flag"] == "").all()
+    # vol 1000 手 -> 100000 股
+    assert df["volume"].iloc[0] == pytest.approx(1000.0 * 100)
+    # amount 1020 千元 -> 1020000 元
+    assert df["amount"].iloc[0] == pytest.approx(1020.0 * 1000)
+    # pct_chg 2.0 (%) -> 0.02 (decimal)
+    assert df["pct_change"].iloc[0] == pytest.approx(0.02)
+    # amplitude computed: (10.5 - 9.9) / 10.0 * 100 = 6.0
+    assert df["amplitude"].iloc[0] == pytest.approx(6.0)
+    # Tushare daily has no turnover -> 0.0
+    assert (df["turnover"] == 0.0).all()
+    # date is datetime
+    assert pd.api.types.is_datetime64_any_dtype(df["date"])
+
+
+def test_fetch_kline_via_tushare_no_token_returns_empty(temp_cache, monkeypatch):
+    """Without TUSHARE_TOKEN, _fetch_kline_via_tushare returns empty df."""
+    from valor.adapters.data.akshare_cache import _fetch_kline_via_tushare
+
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    df = _fetch_kline_via_tushare(
+        symbol="600519",
+        start_date="2026-07-15",
+        end_date="2026-07-16",
+        adjust="qfq",
+    )
+    assert df.empty
+
+
+def test_get_price_history_df_falls_back_to_tushare_when_baostock_and_akshare_fail(
+    temp_cache, monkeypatch
+):
+    """Three-tier fallback: BaoStock fails -> AkShare fails -> Tushare succeeds."""
+    monkeypatch.setenv("TUSHARE_TOKEN", "fake-token")
+
+    start_dt = pd.Timestamp("2026-07-13")
+    end_dt = pd.Timestamp("2026-07-17")
+    trading_days = list(pd.bdate_range("2026-07-13", "2026-07-17").strftime("%Y-%m-%d"))
+
+    mock_tushare_client = MagicMock()
+    mock_tushare_client.available = True
+    mock_tushare_client.query_daily = MagicMock(
+        return_value=_fake_tushare_daily_df(trading_days)
+    )
+
+    with patch("valor.adapters.data.akshare_cache.query_trade_dates",
+               return_value=_trade_dates_df("2026-07-13", "2026-07-17")), \
+         patch("valor.adapters.data.akshare_cache.query_history_k_data_plus",
+               side_effect=BaoStockUnavailable("circuit open")), \
+         patch("valor.adapters.data.akshare_cache.ak.stock_zh_a_hist",
+               return_value=pd.DataFrame()), \
+         patch("valor.adapters.data.akshare_cache._get_tushare_client",
+               return_value=mock_tushare_client):
+        df = ac_module.get_price_history_df(
+            symbol="600519",
+            start_date=start_dt,
+            end_date=end_dt,
+            adjust="qfq",
+        )
+
+    assert not df.empty
+    assert len(df) >= 1
+    # Tushare rows cached in the same baostock_history_k table
+    cached = temp_cache.fetch_records(
+        table=ac_module.HISTORY_TABLE,
+        filters={"symbol": "600519"},
+    )
+    assert len(cached) >= 1
+    # Verify unit conversion persisted to cache (vol 1000 手 -> 100000 股)
+    assert cached[0]["volume"] == pytest.approx(1000.0 * 100)

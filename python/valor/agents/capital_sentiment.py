@@ -82,6 +82,7 @@ def _default_payload(reasoning: str) -> dict:
         "institutional_activity": "quiet",
         "turnover_analysis": "无可用数据",
         "risk_flags": [],
+        "evidence": [],
         "reasoning": reasoning,
     }
 
@@ -156,6 +157,7 @@ def capital_sentiment_agent(state: AgentState):
                     "institutional_activity": parsed.get("institutional_activity", "quiet"),
                     "turnover_analysis": parsed.get("turnover_analysis", ""),
                     "risk_flags": parsed.get("risk_flags", []) or [],
+                    "evidence": parsed.get("evidence", []) or [],
                     "reasoning": parsed.get("reasoning", ""),
                 }
                 logger.info(

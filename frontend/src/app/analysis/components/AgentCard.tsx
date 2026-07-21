@@ -7,6 +7,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useState } from "react";
+import MarkdownRenderer from "@/components/valuecell/renderer/markdown-renderer";
 import AgentResultDisplay from "../AgentResultDisplay";
 import { extractAnalysisResult } from "../analysisExtractor";
 import {
@@ -54,6 +55,10 @@ function SubStateRow({ subKey, data }: { subKey: string; data: unknown }) {
     "bull_bear_debate",
     data as Record<string, unknown>,
   );
+  const polishedMarkdown =
+    data && typeof data === "object" && "polished_markdown" in data
+      ? ((data as Record<string, unknown>).polished_markdown as string)
+      : undefined;
   const [subExpanded, setSubExpanded] = useState(false);
   const [subShowRaw, setSubShowRaw] = useState(false);
 
@@ -88,7 +93,9 @@ function SubStateRow({ subKey, data }: { subKey: string; data: unknown }) {
       </button>
       {subExpanded && (
         <div className="mt-1 max-h-[40vh] overflow-y-auto">
-          {result ? (
+          {polishedMarkdown ? (
+            <MarkdownRenderer content={polishedMarkdown} className="text-sm" />
+          ) : result ? (
             <AgentResultDisplay
               result={result}
               agentName={subKey}
@@ -120,6 +127,12 @@ export default function AgentCard({ name, state, isActive }: AgentCardProps) {
     state?.output != null && !hasSubStates
       ? extractAnalysisResult(name, state.output as Record<string, unknown>)
       : null;
+  const polishedMarkdown =
+    state?.output != null &&
+    typeof state.output === "object" &&
+    "polished_markdown" in state.output
+      ? ((state.output as Record<string, unknown>).polished_markdown as string)
+      : undefined;
 
   return (
     <div
@@ -199,6 +212,8 @@ export default function AgentCard({ name, state, isActive }: AgentCardProps) {
                 );
               })}
             </div>
+          ) : polishedMarkdown ? (
+            <MarkdownRenderer content={polishedMarkdown} className="text-sm" />
           ) : analysisResult ? (
             <div className="space-y-3">
               <AgentResultDisplay

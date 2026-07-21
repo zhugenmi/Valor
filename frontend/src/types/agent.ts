@@ -38,6 +38,7 @@ export interface DecisionPayload {
   quantity: number;
   confidence: number;
   reasoning?: string;
+  current_position?: number;
 }
 
 // Workflow lifecycle events emitted by the ValorAgent full_analysis path.

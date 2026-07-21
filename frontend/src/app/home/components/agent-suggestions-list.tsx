@@ -16,6 +16,7 @@ export interface AgentSuggestion {
   avatars?: React.ReactNode[];
   bgColor?: string; // Tailwind CSS background color class
   decorativeGraphics?: React.ReactNode;
+  presetMessage?: string;
   onClick?: () => void;
 }
 

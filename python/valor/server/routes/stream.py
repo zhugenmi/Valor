@@ -27,6 +27,7 @@ from valor.conversations.storage import (
 from valor.portfolio.storage import PortfolioNotFound
 from valor.server.data_preflight import ensure_latest_trading_day_data
 from valor.server.intent import VALID_AGENTS, classify_intent
+from valor.server.polish import polish_decision
 from valor.server.portfolio_context import load_portfolio_context
 
 router = APIRouter(prefix="/api/v1", tags=["Stream"])
@@ -147,6 +148,39 @@ def _merge_state(accumulated: dict, delta: dict) -> None:
                     accumulated[key] = value
 
 
+# Raw data fields kept in state.data for downstream agents (technicals,
+# risk_manager, fundamentals, valuation) but stripped from SSE/DB payload
+# to keep wire/DB size small. Downstream agents read these from state
+# directly, not from the SSE event.
+# Note: market_cap is a single float, kept in SSE for frontend display.
+_DATA_EXCLUDE_KEYS = frozenset({
+    "prices",
+    "financial_metrics",
+    "financial_line_items",
+    "market_data",
+})
+
+
+def _filter_state_delta(state_delta: dict) -> dict:
+    """Strip raw data fields from a node's state_delta before SSE/DB emit.
+
+    Keeps ``messages``, ``metadata``, and ``data.*`` except for the
+    exclude list. Uses an exclude blacklist (not include whitelist) so
+    future non-raw data fields pass through by default.
+    """
+    if not isinstance(state_delta, dict):
+        return state_delta
+    filtered = {}
+    for key, value in state_delta.items():
+        if key == "data" and isinstance(value, dict):
+            filtered["data"] = {
+                k: v for k, v in value.items() if k not in _DATA_EXCLUDE_KEYS
+            }
+        else:
+            filtered[key] = value
+    return filtered
+
+
 def _extract_final_decision(state: dict) -> dict | None:
     """Extract the portfolio_management_agent's final message as a dict.
 
@@ -224,6 +258,78 @@ def _emit_bull_bear_debate_sub_events(
     return sse_events
 
 
+# node_name -> LangChain message.name attribute produced by that node.
+# market_data is absent: it emits structured data (no HumanMessage to polish).
+_NODE_TO_MSG_NAME: dict[str, str] = {
+    "technicals": "technical_analyst_agent",
+    "fundamentals": "fundamentals_agent",
+    "valuation": "valuation_agent",
+    "capital_sentiment": "capital_sentiment_agent",
+    "macro_industry": "macro_industry_agent",
+    "bull_bear_debate": "bull_bear_debate_agent",
+    "risk_manager": "risk_management_agent",
+    "portfolio_manager": "portfolio_management_agent",
+}
+
+
+async def _polish_node_output(
+    ticker: str, node_name: str, state_delta: dict,
+) -> str | None:
+    """Extract the node's last message and polish it to markdown via LLM.
+
+    Returns None when the node has no polishable message (e.g. market_data).
+    polish_decision internally falls back to a pretty JSON code block on LLM
+    error, so a non-None return is always renderable by the frontend.
+    """
+    target_name = _NODE_TO_MSG_NAME.get(node_name)
+    if target_name is None:
+        return None
+
+    for msg in reversed(state_delta.get("messages", [])):
+        if getattr(msg, "name", None) != target_name:
+            continue
+        try:
+            content = json.loads(msg.content)
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            content = {"raw": str(getattr(msg, "content", ""))}
+        return await polish_decision(ticker, node_name, content)
+    return None
+
+
+_DEFAULT_PORTFOLIO_NAME = "持仓"
+
+
+def _load_default_portfolio(ticker: str) -> tuple[dict, str | None]:
+    """Find the portfolio named "持仓" and build a {cash, stock} dict for ticker.
+
+    Returns ({cash: 100000.0, stock: 0}, None) when the "持仓" portfolio is
+    absent or loading fails. On success, stock is the quantity of ``ticker``
+    held in that portfolio (0 when the ticker is not held), and the second
+    element is the portfolio_id.
+    """
+    fallback = ({"cash": 100000.0, "stock": 0}, None)
+    try:
+        from valor.portfolio.storage import list_portfolios
+
+        for pf in list_portfolios():
+            if pf.name != _DEFAULT_PORTFOLIO_NAME:
+                continue
+            stock_qty = 0
+            for h in pf.holdings:
+                if h.ticker == ticker:
+                    stock_qty = sum(lot.quantity for lot in h.lots)
+                    break
+            portfolio = {"cash": float(pf.cash), "stock": stock_qty}
+            logger.info(
+                "Default portfolio '持仓' (id=%s): cash=%s, %s 持仓=%d",
+                pf.portfolio_id, portfolio["cash"], ticker, stock_qty,
+            )
+            return portfolio, pf.portfolio_id
+    except Exception as exc:
+        logger.warning("Default portfolio 加载失败: %s", exc)
+    return fallback
+
+
 # ---------------------------------------------------------------------------
 # SSE endpoint
 # ---------------------------------------------------------------------------
@@ -242,6 +348,7 @@ async def agent_stream(body: dict):
     request_ticker: str | None = body.get("ticker") or None
 
     async def _stream() -> AsyncGenerator[str, None]:
+        nonlocal portfolio_id
         # 1. conversation_started
         yield _sse("conversation_started", {"conversation_id": conversation_id})
 
@@ -295,12 +402,17 @@ async def agent_stream(body: dict):
         _persist("user", "message", query, msg_id=user_msg_id)
 
         # 3. thread_started
+        # Generate agent_msg_id up front so thread_started, the agent reply SSE
+        # event, and the persisted message all share the same id. Without this,
+        # SSE item_id="" and DB msg-<uuid> would render as two separate messages
+        # when history is replayed during streaming.
+        agent_msg_id = f"msg-{uuid.uuid4()}"
         yield _sse("thread_started", {
             "role": "agent",
             "conversation_id": conversation_id,
             "thread_id": thread_id,
             "task_id": "",
-            "item_id": "",
+            "item_id": agent_msg_id,
             "metadata": {},
             "payload": {"content": ""},
         })
@@ -313,11 +425,11 @@ async def agent_stream(body: dict):
                 "conversation_id": conversation_id,
                 "thread_id": thread_id,
                 "task_id": "",
-                "item_id": "",
+                "item_id": agent_msg_id,
                 "metadata": {},
                 "payload": {"content": reply},
             })
-            _persist("assistant", "message", reply)
+            _persist("assistant", "message", reply, msg_id=agent_msg_id)
             yield _sse("done", {"conversation_id": conversation_id, "thread_id": thread_id})
             return
 
@@ -332,11 +444,11 @@ async def agent_stream(body: dict):
                 "conversation_id": conversation_id,
                 "thread_id": thread_id,
                 "task_id": "",
-                "item_id": "",
+                "item_id": agent_msg_id,
                 "metadata": {},
                 "payload": {"content": reply},
             })
-            _persist("assistant", "message", reply)
+            _persist("assistant", "message", reply, msg_id=agent_msg_id)
             yield _sse("done", {"conversation_id": conversation_id, "thread_id": thread_id})
             return
 
@@ -348,11 +460,11 @@ async def agent_stream(body: dict):
                 "conversation_id": conversation_id,
                 "thread_id": thread_id,
                 "task_id": "",
-                "item_id": "",
+                "item_id": agent_msg_id,
                 "metadata": {},
                 "payload": {"content": reply},
             })
-            _persist("assistant", "message", reply)
+            _persist("assistant", "message", reply, msg_id=agent_msg_id)
             yield _sse("done", {"conversation_id": conversation_id, "thread_id": thread_id})
             return
 
@@ -410,10 +522,7 @@ async def agent_stream(body: dict):
                                                 ensure_ascii=False))
                             continue
 
-                        payload_json = json.dumps(
-                            {"ticker": ticker, "agent": name, "decision": content},
-                            ensure_ascii=False,
-                        )
+                        markdown = await polish_decision(ticker, name, content)
                         yield _sse("component_generator", {
                             "role": "agent",
                             "conversation_id": conversation_id,
@@ -423,10 +532,10 @@ async def agent_stream(body: dict):
                             "metadata": {"agent_name": name},
                             "payload": {
                                 "component_type": "markdown",
-                                "content": payload_json,
+                                "content": markdown,
                             },
                         })
-                        _persist("assistant", "component_generator", payload_json)
+                        _persist("assistant", "component_generator", markdown)
 
             if intent.intent == "full_analysis":
                 # Resolve portfolio context (real holdings if portfolio_id provided)
@@ -449,6 +558,10 @@ async def agent_stream(body: dict):
                         update_conversation_status(conversation_id, "failed")
                         yield _sse("done", {"conversation_id": conversation_id, "thread_id": thread_id})
                         return
+                elif request_ticker:
+                    portfolio, matched_pf_id = _load_default_portfolio(request_ticker)
+                    if matched_pf_id:
+                        portfolio_id = matched_pf_id
                 else:
                     portfolio = {"cash": 100000.0, "stock": 0}
 
@@ -516,22 +629,32 @@ async def agent_stream(body: dict):
                                 skip_keys=seen_debate_subs,
                             ):
                                 yield sse_str
+                            filtered_state = _filter_state_delta(state_delta)
                             _persist("assistant", "agent_completed",
-                                     json.dumps({"agent": node_name, "state": state_delta},
+                                     json.dumps({"agent": node_name, "state": filtered_state},
                                                 default=_json_default, ensure_ascii=False))
                         else:
+                            filtered_state = _filter_state_delta(state_delta)
+                            markdown = await _polish_node_output(ticker, node_name, state_delta)
+                            if markdown:
+                                filtered_state["polished_markdown"] = markdown
                             yield _sse("agent_completed", {
                                 "conversation_id": conversation_id,
                                 "thread_id": thread_id,
                                 "agent": node_name,
-                                "state": state_delta,
+                                "state": filtered_state,
                             })
                             _persist("assistant", "agent_completed",
-                                     json.dumps({"agent": node_name, "state": state_delta},
+                                     json.dumps({"agent": node_name, "state": filtered_state},
                                                 default=_json_default, ensure_ascii=False))
                     elif event_type == "debate_stage":
                         sub_key, sub_payload = payload
                         seen_debate_subs.add(sub_key)
+                        markdown = await polish_decision(
+                            ticker, f"bull_bear_debate.{sub_key}", sub_payload,
+                        )
+                        if markdown:
+                            sub_payload = {**sub_payload, "polished_markdown": markdown}
                         yield _sse("agent_completed", {
                             "conversation_id": conversation_id,
                             "thread_id": thread_id,

@@ -1,6 +1,7 @@
 from valor.agents.state import AgentState, show_agent_reasoning, show_workflow_status
 from valor.tools.api import get_financial_metrics, get_financial_statements, get_market_data, get_price_history
 from valor.tools.market_snapshot import get_market_snapshot
+from valor.tools.summary import build_financial_summary, build_prices_summary
 from valor.utils.logging_config import setup_logger
 from valor.utils.api_utils import agent_endpoint
 from valor.adapters.data.akshare_cache import get_latest_trading_day
@@ -98,18 +99,15 @@ def market_data_agent(state: AgentState):
         logger.error(f"获取市场数据失败: {str(e)}")
         market_data = {"market_cap": 0}
 
-    # Fallback: compute market_cap from PE × net_income if AkShare realtime is down
+    # If all market cap sources failed, log warning and keep 0 (downstream agents handle missing data).
+    # Previously this fell back to pe_ratio * net_income, but PE itself may come from the same
+    # valuation source, creating a circular dependency. Better to surface the missing data.
     market_cap = market_data.get("market_cap", 0) or 0
     if market_cap <= 0:
-        try:
-            pe = financial_metrics[0].get("pe_ratio", 0) if financial_metrics else 0
-            net_income = financial_line_items[0].get("net_income", 0) if financial_line_items else 0
-            if pe and net_income:
-                market_cap = pe * net_income
-                logger.info("Market cap estimated: {mc} (PE={pe} × NI={ni})", mc=market_cap, pe=pe, ni=net_income)
-                market_data = {**market_data, "market_cap": market_cap}
-        except Exception:
-            pass
+        logger.warning(
+            f"Market cap unavailable for {ticker} (Baidu valuation + LLM snapshot both failed); "
+            "downstream valuation agent will skip gap analysis."
+        )
 
     # 确保数据格式正确
     if not isinstance(prices_df, pd.DataFrame):
@@ -118,6 +116,10 @@ def market_data_agent(state: AgentState):
 
     # 转换价格数据为字典格式
     prices_dict = prices_df.to_dict('records')
+
+    # 预计算摘要供 SSE/前端展示,避免全量 K 线进入 SSE/DB
+    prices_summary = build_prices_summary(prices_df, start_date, end_date)
+    financial_summary = build_financial_summary(financial_metrics, financial_line_items)
 
     # 保存推理信息到metadata供API使用
     market_data_summary = {
@@ -142,6 +144,8 @@ def market_data_agent(state: AgentState):
         "data": {
             **data,
             "prices": prices_dict,
+            "prices_summary": prices_summary,
+            "financial_summary": financial_summary,
             "start_date": start_date,
             "end_date": end_date,
             "financial_metrics": financial_metrics,

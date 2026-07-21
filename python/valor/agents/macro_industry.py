@@ -88,6 +88,7 @@ def _default_payload(reasoning: str) -> dict:
         "policy_impact": "neutral",
         "key_factors": [],
         "risk_flags": [],
+        "evidence": [],
         "reasoning": reasoning,
     }
 
@@ -163,6 +164,7 @@ def macro_industry_agent(state: AgentState):
                     "policy_impact": parsed.get("policy_impact", "neutral"),
                     "key_factors": parsed.get("key_factors", []) or [],
                     "risk_flags": parsed.get("risk_flags", []) or [],
+                    "evidence": parsed.get("evidence", []) or [],
                     "reasoning": parsed.get("reasoning", ""),
                 }
                 logger.info(

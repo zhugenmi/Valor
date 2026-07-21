@@ -18,6 +18,7 @@ class Conversation(BaseModel):
 class ConversationMessage(BaseModel):
     id: str
     conversation_id: str
+    thread_id: str | None = None
     role: str  # 'user' | 'assistant' | 'system'
     event_type: str | None = None
     content: str | None = None

@@ -405,12 +405,18 @@ def _make_fake_run_agents_multi():
     return _fake
 
 
+async def _fake_polish_decision(ticker, agent_name, decision):
+    """Deterministic markdown stub so tests don't hit the real LLM."""
+    return f"## {agent_name} 分析（{ticker}）\n\n润色后摘要（stub）。"
+
+
 def test_sse_single_analysis_multi_agent_emits_component_generator_per_agent(
     client, monkeypatch
 ):
     """single_analysis 多 agent 应为每个 agent yield 一个 component_generator，item_id 唯一。"""
     monkeypatch.setattr("valor.server.routes.stream.classify_intent", _single_multi_agent_intent)
     monkeypatch.setattr("valor.server.routes.stream.run_agents", _make_fake_run_agents_multi())
+    monkeypatch.setattr("valor.server.routes.stream.polish_decision", _fake_polish_decision)
 
     r = client.post(
         "/api/v1/agents/stream",
@@ -427,6 +433,12 @@ def test_sse_single_analysis_multi_agent_emits_component_generator_per_agent(
     # metadata 带 agent_name
     agent_names = [e["data"]["metadata"]["agent_name"] for e in component_events]
     assert set(agent_names) == {"technicals", "valuation"}
+
+    # 内容应为润色后的 markdown，而非原始 JSON
+    for ev in component_events:
+        content = ev["data"]["payload"]["content"]
+        assert "润色后摘要" in content
+        assert not content.lstrip().startswith("{")
 
 
 async def _single_empty_agents_intent(query):
@@ -484,6 +496,7 @@ def test_sse_single_analysis_failed_agent_emits_agent_failed(client, monkeypatch
     """失败的 agent 应 yield agent_failed，其他 agent 仍 component_generator。"""
     monkeypatch.setattr("valor.server.routes.stream.classify_intent", _single_multi_agent_intent)
     monkeypatch.setattr("valor.server.routes.stream.run_agents", _make_fake_run_agents_with_failure())
+    monkeypatch.setattr("valor.server.routes.stream.polish_decision", _fake_polish_decision)
 
     r = client.post(
         "/api/v1/agents/stream",

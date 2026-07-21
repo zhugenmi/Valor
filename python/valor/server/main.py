@@ -6,9 +6,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from valor.adapters.data.akshare_adapter import AkShareAdapter
-from valor.adapters.data.baostock_adapter import BaoStockAdapter
-from valor.adapters.data.router import DataRouter
+from valor.adapters.data.factory import build_data_router
 from valor.server.routes.analysis import router as analysis_router
 from valor.server.routes.auth import router as auth_router
 from valor.conversations.routes import router as conversations_router
@@ -30,9 +28,7 @@ async def lifespan(app: FastAPI):
     from valor.server import db
 
     db.init_db()
-    primary = AkShareAdapter()
-    sources = {"baostock": BaoStockAdapter()}
-    app.state.data_router = DataRouter(primary=primary, sources=sources)
+    app.state.data_router = build_data_router()
     yield
 
 

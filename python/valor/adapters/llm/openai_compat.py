@@ -26,6 +26,7 @@ class OpenAICompatProvider:
         self.base_url = (base_url or os.getenv("VALOR_OPENAI_BASE_URL", "https://api.openai.com/v1")).rstrip("/")
         self.api_key = api_key or os.getenv("VALOR_OPENAI_API_KEY", "")
         self.default_model = default_model or os.getenv("VALOR_OPENAI_MODEL", "gpt-4o")
+        self.timeout = float(os.getenv("VALOR_LLM_TIMEOUT", "120"))
         logger.info(f"OpenAICompatProvider initialized (base_url={self.base_url}, default_model={self.default_model})")
 
     @property
@@ -53,7 +54,7 @@ class OpenAICompatProvider:
         url = f"{self.base_url}/chat/completions"
         logger.debug(f"OpenAI API request: {url} (model={model_id})")
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
                 resp = await client.post(
                     url,
@@ -70,8 +71,8 @@ class OpenAICompatProvider:
                 logger.error(f"OpenAI API HTTP error {exc.response.status_code}: {exc.response.text}")
                 raise RuntimeError(f"OpenAI API error {exc.response.status_code}: {exc.response.text}") from exc
             except httpx.RequestError as exc:
-                logger.error(f"OpenAI API request failed: {exc}")
-                raise RuntimeError(f"OpenAI API request failed: {exc}") from exc
+                logger.error(f"OpenAI API request failed: {type(exc).__name__}: {exc}")
+                raise RuntimeError(f"OpenAI API request failed: {type(exc).__name__}: {exc}") from exc
 
         try:
             return body["choices"][0]["message"]["content"]

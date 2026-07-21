@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS conversations (
 CREATE TABLE IF NOT EXISTS conversation_messages (
     id              TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    thread_id       TEXT,
     role            TEXT NOT NULL,
     event_type      TEXT,
     content         TEXT,
@@ -111,6 +112,15 @@ def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with get_conn() as conn:
         conn.executescript(_SCHEMA)
+        # Migration: add thread_id column if it doesn't exist (schema evolution)
+        cols = [
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(conversation_messages)").fetchall()
+        ]
+        if "thread_id" not in cols:
+            conn.execute(
+                "ALTER TABLE conversation_messages ADD COLUMN thread_id TEXT"
+            )
         _seed_providers(conn)
 
 

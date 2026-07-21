@@ -28,11 +28,32 @@ async def list_conversations_route():
 @router.get("/conversations/{conversation_id}/history")
 async def conversation_history_route(conversation_id: str):
     msgs = get_messages(conversation_id)
+    items = []
+    for m in msgs:
+        event_type = m.event_type or "message"
+        # Map persisted ConversationMessage back to SSE-compatible shape
+        # so the frontend's processSSEEvent can replay it correctly.
+        sse_data: dict = {
+            "event": event_type,
+            "data": {
+                "role": m.role,
+                "conversation_id": m.conversation_id,
+                "thread_id": m.thread_id or "",
+                "task_id": "",
+                "item_id": m.id,
+                "metadata": {},
+                "payload": {"content": m.content or ""},
+            },
+        }
+        # User messages use component_type "markdown" for the chat renderer
+        if m.role == "user":
+            sse_data["data"]["component_type"] = "markdown"
+        items.append(sse_data)
     return {
         "code": 0,
         "data": {
             "conversation_id": conversation_id,
-            "items": [m.model_dump() for m in msgs],
+            "items": items,
         },
         "msg": "ok",
     }

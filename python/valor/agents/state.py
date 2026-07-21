@@ -9,16 +9,31 @@ from valor.utils.logging_config import setup_logger
 logger = setup_logger('agent_state')
 
 
-def merge_dicts(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
-    return {**a, **b}
+def _deep_merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+    """Recursive dict merge - merges nested dicts instead of overwriting.
+
+    Mirrors ``workflow.py``'s GraphState reducer so AgentState and
+    GraphState behave identically when used through the workflow.
+    """
+    result = a.copy()
+    for key, b_val in b.items():
+        if key in result and isinstance(result[key], dict) and isinstance(b_val, dict):
+            result[key] = _deep_merge(result[key], b_val)
+        else:
+            result[key] = b_val
+    return result
+
+
+# Alias kept for backwards compatibility with any external imports.
+merge_dicts = _deep_merge
 
 # Define agent state
 
 
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
-    data: Annotated[Dict[str, Any], merge_dicts]
-    metadata: Annotated[Dict[str, Any], merge_dicts]
+    data: Annotated[Dict[str, Any], _deep_merge]
+    metadata: Annotated[Dict[str, Any], _deep_merge]
 
 
 def show_workflow_status(agent_name: str, status: str = "processing"):

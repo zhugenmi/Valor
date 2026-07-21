@@ -138,6 +138,42 @@ def risk_management_agent(state: AgentState):
     bear_confidence = debate_results["bear_confidence"]
     debate_confidence = debate_results["confidence"]
     debate_signal = debate_results["signal"]
+
+    # Fallback: debate 失败（confidence=0）时，基于前序 5 个维度代理的 signal 投票
+    # 决定 trading_action，避免被退化的 neutral/0.0 信号绑架成 hold。
+    if debate_confidence == 0.0:
+        from valor.agents.bull_bear_debate import _load_dimension_signal
+
+        dimension_agent_names = [
+            "technical_analyst_agent",
+            "fundamentals_agent",
+            "valuation_agent",
+            "capital_sentiment_agent",
+            "macro_industry_agent",
+        ]
+        votes = {"bullish": 0, "bearish": 0, "neutral": 0}
+        for aname in dimension_agent_names:
+            dim_signal = _load_dimension_signal(state, aname).get("signal", "neutral")
+            if dim_signal in votes:
+                votes[dim_signal] += 1
+            else:
+                votes["neutral"] += 1
+        if votes["bullish"] > votes["bearish"]:
+            debate_signal = "bullish"
+            debate_confidence = 0.6
+        elif votes["bearish"] > votes["bullish"]:
+            debate_signal = "bearish"
+            debate_confidence = 0.6
+        else:
+            debate_signal = "neutral"
+            debate_confidence = 0.3
+        logger.info(
+            "📊 Debate fallback: 维度信号投票 %s -> signal=%s confidence=%.2f",
+            votes,
+            debate_signal,
+            debate_confidence,
+        )
+
     logger.info(
         "🧮 Debate输入: signal=%s bull=%.2f bear=%.2f confidence=%.2f",
         debate_signal,
@@ -198,6 +234,16 @@ def risk_management_agent(state: AgentState):
             "bear_confidence": bear_confidence,
             "debate_confidence": debate_confidence,
             "debate_signal": debate_signal
+        },
+        # 显式 evidence 字段: 供下游 portfolio_manager 引用具体风险数值
+        "evidence": {
+            "volatility": float(volatility),
+            "value_at_risk_95": float(var_95),
+            "max_drawdown": float(max_drawdown),
+            "volatility_percentile": float(volatility_percentile)
+            if not math.isnan(volatility_percentile) else 0.0,
+            "market_risk_score": int(market_risk_score),
+            "risk_score": int(risk_score),
         },
         "reasoning": (
             f"综合风险评分 {risk_score}/10（市场风险子项 {market_risk_score}）。"

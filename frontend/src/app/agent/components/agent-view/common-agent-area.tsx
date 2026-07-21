@@ -19,6 +19,7 @@ import {
   useMultiSection,
 } from "@/provider/multi-section-provider";
 import {
+  useAgentStore,
   useAgentStoreActions,
   useCurrentConversation,
 } from "@/store/agent-store";
@@ -54,12 +55,18 @@ const CommonAgentAreaContent: FC<CommonAgentAreaProps> = ({ agentName }) => {
   const portfolioIdFromLocation = useLocation().state?.portfolioId;
   const tickerFromLocation = useLocation().state?.ticker;
 
-  const portfolioIdRef = useRef<string | undefined>(portfolioIdFromLocation);
+  const portfolioIdRef = useRef<string | undefined>(
+    portfolioIdFromLocation ?? undefined,
+  );
   const tickerRef = useRef<string | undefined>(tickerFromLocation);
   useEffect(() => {
-    portfolioIdRef.current = portfolioIdFromLocation;
+    if (portfolioIdFromLocation) {
+      portfolioIdRef.current = portfolioIdFromLocation;
+    }
+  }, [portfolioIdFromLocation]);
+  useEffect(() => {
     tickerRef.current = tickerFromLocation;
-  }, [portfolioIdFromLocation, tickerFromLocation]);
+  }, [tickerFromLocation]);
 
   // Use optimized hooks with built-in shallow comparison
   const { curConversation, curConversationId } = useCurrentConversation();
@@ -74,25 +81,6 @@ const CommonAgentAreaContent: FC<CommonAgentAreaProps> = ({ agentName }) => {
   const { data: conversationHistory } =
     useGetConversationHistory(conversationId);
   const { data: taskList } = usePollTaskList(conversationId);
-
-  // Load conversation history (only once when conversation changes)
-  useEffect(() => {
-    if (
-      !conversationId ||
-      !conversationHistory ||
-      conversationHistory.length === 0
-    )
-      return;
-
-    dispatchAgentStoreHistory(conversationId, conversationHistory, true);
-  }, [conversationId, conversationHistory, dispatchAgentStoreHistory]);
-
-  // Update task list (polls every 30s)
-  useEffect(() => {
-    if (!conversationId || !taskList || taskList.length === 0) return;
-
-    dispatchAgentStoreHistory(conversationId, taskList);
-  }, [conversationId, taskList, dispatchAgentStoreHistory]);
 
   // Initialize SSE connection using the useSSE hook
   const { connect, close, isStreaming } = useSSE({
@@ -150,6 +138,36 @@ const CommonAgentAreaContent: FC<CommonAgentAreaProps> = ({ agentName }) => {
       },
     },
   });
+
+  // Load conversation history once per conversation. SSE is the source of
+  // truth during/after streaming; replaying history with clearHistory=true
+  // after the stream ends would wipe SSE data that hasn't been persisted yet
+  // (the history was fetched at stream start, before the agent reply was
+  // persisted, so clearHistory=true loses the agent reply).
+  const loadedHistoryForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !conversationId ||
+      !conversationHistory ||
+      conversationHistory.length === 0
+    )
+      return;
+    if (loadedHistoryForRef.current === conversationId) return;
+    loadedHistoryForRef.current = conversationId;
+    // Only clear if the store doesn't already have SSE data for this
+    // conversation. This protects the agent reply that SSE already wrote.
+    const existing = useAgentStore.getState().agentStore[conversationId];
+    const shouldClear =
+      !existing || Object.keys(existing.threads).length === 0;
+    dispatchAgentStoreHistory(conversationId, conversationHistory, shouldClear);
+  }, [conversationId, conversationHistory, dispatchAgentStoreHistory]);
+
+  // Update task list (polls every 30s)
+  useEffect(() => {
+    if (!conversationId || !taskList || taskList.length === 0) return;
+
+    dispatchAgentStoreHistory(conversationId, taskList);
+  }, [conversationId, taskList, dispatchAgentStoreHistory]);
 
   // Send message to agent
   // biome-ignore lint/correctness/useExhaustiveDependencies: connect is no need to be in dependencies

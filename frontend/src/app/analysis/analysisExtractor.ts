@@ -476,36 +476,94 @@ function _extractMarketData(
     metrics["市值"] = _fmtCurrency(Number(marketCap));
   }
 
-  const prices = data["prices"] as Array<Record<string, unknown>> | undefined;
-  if (prices && prices.length > 0) {
-    const closes = prices
-      .map((p) => Number(p["close"]))
-      .filter(Number.isFinite);
-    const volumes = prices
-      .map((p) => Number(p["volume"]))
-      .filter(Number.isFinite);
-    if (closes.length > 0) {
-      const maxClose = Math.max(...closes);
-      const minClose = Math.min(...closes);
-      const avgClose = closes.reduce((a, b) => a + b, 0) / closes.length;
-      // locate date for max/min close
-      const maxIdx = closes.indexOf(maxClose);
-      const minIdx = closes.indexOf(minClose);
-      const maxDate = maxIdx >= 0 ? _fmtDate(prices[maxIdx]?.["date"]) : "";
-      const minDate = minIdx >= 0 ? _fmtDate(prices[minIdx]?.["date"]) : "";
-      metrics["最高价"] = maxDate
-        ? `${maxClose.toFixed(2)}（${maxDate}）`
-        : maxClose.toFixed(2);
-      metrics["最低价"] = minDate
-        ? `${minClose.toFixed(2)}（${minDate}）`
-        : minClose.toFixed(2);
-      metrics["均价"] = avgClose.toFixed(2);
-      metrics["数据天数"] = closes.length;
+  // 优先读后端预计算的 prices_summary.statistics(轻量),
+  // fallback 到 data.prices(兼容历史记录,需要遍历 365 条 K 线)
+  const summary = data["prices_summary"] as {
+    statistics?: {
+      highest?: { value?: number; date?: string };
+      lowest?: { value?: number; date?: string };
+      avg_close?: number;
+      annualized_volatility?: number;
+      avg_volume?: number;
+    };
+    time_range?: { trading_days?: number };
+  } | undefined;
+
+  if (summary?.statistics) {
+    const s = summary.statistics;
+    if (s.highest && Number.isFinite(Number(s.highest.value))) {
+      const v = Number(s.highest.value);
+      const d = s.highest.date ? _fmtDate(s.highest.date) : "";
+      metrics["最高价"] = d ? `${v.toFixed(2)}（${d}）` : v.toFixed(2);
     }
-    if (volumes.length > 0) {
-      metrics["日均成交量"] = Math.round(
-        volumes.reduce((a, b) => a + b, 0) / volumes.length,
-      ).toLocaleString();
+    if (s.lowest && Number.isFinite(Number(s.lowest.value))) {
+      const v = Number(s.lowest.value);
+      const d = s.lowest.date ? _fmtDate(s.lowest.date) : "";
+      metrics["最低价"] = d ? `${v.toFixed(2)}（${d}）` : v.toFixed(2);
+    }
+    if (Number.isFinite(Number(s.avg_close))) {
+      metrics["均价"] = Number(s.avg_close).toFixed(2);
+    }
+    if (summary.time_range && Number.isFinite(Number(summary.time_range.trading_days))) {
+      metrics["数据天数"] = Number(summary.time_range.trading_days);
+    }
+    if (Number.isFinite(Number(s.avg_volume))) {
+      metrics["日均成交量"] = Math.round(Number(s.avg_volume)).toLocaleString();
+    }
+  } else {
+    // fallback: 旧格式,从 data.prices 计算(兼容历史记录)
+    const prices = data["prices"] as Array<Record<string, unknown>> | undefined;
+    if (prices && prices.length > 0) {
+      const closes = prices
+        .map((p) => Number(p["close"]))
+        .filter(Number.isFinite);
+      const volumes = prices
+        .map((p) => Number(p["volume"]))
+        .filter(Number.isFinite);
+      if (closes.length > 0) {
+        const maxClose = Math.max(...closes);
+        const minClose = Math.min(...closes);
+        const avgClose = closes.reduce((a, b) => a + b, 0) / closes.length;
+        // locate date for max/min close
+        const maxIdx = closes.indexOf(maxClose);
+        const minIdx = closes.indexOf(minClose);
+        const maxDate = maxIdx >= 0 ? _fmtDate(prices[maxIdx]?.["date"]) : "";
+        const minDate = minIdx >= 0 ? _fmtDate(prices[minIdx]?.["date"]) : "";
+        metrics["最高价"] = maxDate
+          ? `${maxClose.toFixed(2)}（${maxDate}）`
+          : maxClose.toFixed(2);
+        metrics["最低价"] = minDate
+          ? `${minClose.toFixed(2)}（${minDate}）`
+          : minClose.toFixed(2);
+        metrics["均价"] = avgClose.toFixed(2);
+        metrics["数据天数"] = closes.length;
+      }
+      if (volumes.length > 0) {
+        metrics["日均成交量"] = Math.round(
+          volumes.reduce((a, b) => a + b, 0) / volumes.length,
+        ).toLocaleString();
+      }
+    }
+  }
+
+  // 估值指标从 financial_summary 读取(后端预计算,含 PE-TTM/PB/股息率/每股净资产)
+  const finSummary = data["financial_summary"] as Record<string, number> | undefined;
+  if (finSummary) {
+    const peTtm = Number(finSummary["pe_ratio"]);
+    if (Number.isFinite(peTtm) && peTtm > 0) {
+      metrics["市盈率(TTM)"] = peTtm.toFixed(2);
+    }
+    const pb = Number(finSummary["price_to_book"]);
+    if (Number.isFinite(pb) && pb > 0) {
+      metrics["市净率"] = pb.toFixed(2);
+    }
+    const dividendYield = Number(finSummary["dividend_yield"]);
+    if (Number.isFinite(dividendYield) && dividendYield > 0) {
+      metrics["股息率"] = `${(dividendYield * 100).toFixed(2)}%`;
+    }
+    const bookValuePerShare = Number(finSummary["book_value_per_share"]);
+    if (Number.isFinite(bookValuePerShare) && bookValuePerShare > 0) {
+      metrics["每股净资产"] = bookValuePerShare.toFixed(2);
     }
   }
 

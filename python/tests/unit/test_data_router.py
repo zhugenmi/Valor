@@ -74,3 +74,39 @@ async def test_router_raises_when_all_sources_fail():
     )
     with pytest.raises(RuntimeError, match="all sources failed"):
         await router.get_realtime_quote("600519")
+
+
+@pytest.mark.asyncio
+async def test_router_three_source_fallback_chain():
+    """BaoStock -> AkShare -> Tushare chain: first two fail, third succeeds."""
+    primary = FakeAdapter("baostock", fail_methods={"get_daily_history"})
+    akshare = FakeAdapter("akshare", fail_methods={"get_daily_history"})
+    tushare = FakeAdapter("tushare")
+    router = DataRouter(
+        primary=primary,
+        fallbacks_by_method={"get_daily_history": ["akshare", "tushare"]},
+        sources={"baostock": primary, "akshare": akshare, "tushare": tushare},
+    )
+    df = await router.get_daily_history("600519", "2026-07-15", "2026-07-17")
+    assert df["source"].iloc[0] == "tushare"
+    # Both primary and first fallback were attempted
+    assert len(primary.calls) == 1
+    assert len(akshare.calls) == 1
+    assert len(tushare.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_router_fallback_chain_stops_at_first_success():
+    """If primary succeeds, fallbacks are not called."""
+    primary = FakeAdapter("baostock")
+    akshare = FakeAdapter("akshare")
+    tushare = FakeAdapter("tushare")
+    router = DataRouter(
+        primary=primary,
+        fallbacks_by_method={"get_daily_history": ["akshare", "tushare"]},
+        sources={"baostock": primary, "akshare": akshare, "tushare": tushare},
+    )
+    df = await router.get_daily_history("600519", "2026-07-15", "2026-07-17")
+    assert df["source"].iloc[0] == "baostock"
+    assert len(akshare.calls) == 0
+    assert len(tushare.calls) == 0

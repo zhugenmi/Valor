@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import json
 from pathlib import Path
 import os
@@ -41,6 +41,8 @@ CACHE_PATH = Path(os.getenv("MARKET_CACHE_DB_PATH", str(_default_cache_path)))
 HISTORY_TABLE = "baostock_history_k"
 STOCK_NEWS_EM_TABLE = "stock_news_em_daily"
 SPOT_TABLE = "stock_bid_ask_em"
+VALUATION_TABLE = "stock_zh_valuation_baidu"
+DIVIDEND_TABLE = "stock_history_dividend_detail"
 
 # Map stock_bid_ask_em item labels to stock_zh_a_spot_em column names so
 # downstream consumers (golden fixtures, adapters) keep seeing the same shape.
@@ -167,6 +169,154 @@ def get_stock_spot_row(symbol: str, ttl_seconds: int = 600) -> Optional[pd.Serie
     return pd.Series(row_dict)
 
 
+# ---------------------------------------------------------------------------
+# Valuation indicators (PE-TTM / PB / market_cap) from Baidu Gushitong
+# ---------------------------------------------------------------------------
+
+
+def _fetch_valuation_baidu(symbol: str, indicator: str) -> pd.DataFrame:
+    """Call stock_zh_valuation_baidu for one indicator; return empty df on failure."""
+    try:
+        df = _call_with_retry(
+            lambda: ak.stock_zh_valuation_baidu(
+                symbol=symbol, indicator=indicator, period="近一年"
+            ),
+            f"stock_zh_valuation_baidu[{indicator}]",
+        )
+        return df if df is not None else pd.DataFrame()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"stock_zh_valuation_baidu[{indicator}] error: {exc}")
+        return pd.DataFrame()
+
+
+def get_valuation_indicator(symbol: str, ttl_seconds: int = 24 * 3600) -> dict:
+    """获取 PE-TTM / PB / 总市值 / 股价(百度股市通,每日更新)。
+
+    Returns dict with keys: date, pe_ttm, pb, market_cap (元), price.
+    失败返回空 dict,调用方负责 fallback。
+    """
+    fail_key = f"val_{symbol}"
+    fail_ts = _failure_cache.get(fail_key)
+    if fail_ts is not None and (time.monotonic() - fail_ts) < FAILURE_CACHE_TTL:
+        return {}
+
+    cached = cache.fetch_records(
+        table=VALUATION_TABLE,
+        filters={COL_CODE: symbol},
+        ttl_seconds=ttl_seconds,
+        order_by='"缓存时间" DESC',
+        limit=1,
+    )
+    if cached:
+        _log_cache_hit(VALUATION_TABLE, symbol, 1)
+        row = cached[0].copy()
+        row.pop("缓存时间", None)
+        return row
+
+    market_cap_series = _fetch_valuation_baidu(symbol, "总市值")
+    pe_series = _fetch_valuation_baidu(symbol, "市盈率(TTM)")
+    pb_series = _fetch_valuation_baidu(symbol, "市净率")
+
+    if market_cap_series.empty or pe_series.empty or pb_series.empty:
+        _failure_cache[fail_key] = time.monotonic()
+        return {}
+
+    def _last_value(df: pd.DataFrame) -> float:
+        try:
+            return float(pd.to_numeric(df.iloc[-1]["value"], errors="coerce"))
+        except (KeyError, IndexError, ValueError, TypeError):
+            return 0.0
+
+    market_cap_yi = _last_value(market_cap_series)
+    pe_ttm = _last_value(pe_series)
+    pb = _last_value(pb_series)
+    date_str = str(market_cap_series.iloc[-1].get("date", ""))
+
+    # 百度接口返回单位: 亿元,转换为元
+    market_cap = market_cap_yi * 1e8
+
+    # 从 BaoStock 历史缓存取最新收盘价(代价小,缓存命中)
+    price = 0.0
+    try:
+        end = datetime.now()
+        start = end - timedelta(days=10)
+        price_df = get_price_history_df(symbol, start, end, adjust="qfq")
+        if not price_df.empty:
+            price = float(pd.to_numeric(price_df["close"].iloc[-1], errors="coerce"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"get_valuation_indicator: 获取最新股价失败: {exc}")
+
+    record = {
+        COL_CODE: symbol,
+        "date": date_str,
+        "pe_ttm": pe_ttm,
+        "pb": pb,
+        "market_cap": market_cap,
+        "price": price,
+    }
+    cache.upsert_records(VALUATION_TABLE, [record], key_columns=[COL_CODE])
+    _log_cache_upsert(VALUATION_TABLE, symbol, 1)
+    return record
+
+
+def get_dividend_yield(
+    symbol: str,
+    current_price: float,
+    ttl_seconds: int = 30 * 24 * 3600,
+) -> float:
+    """计算近12个月股息率(基于除权除息日)。
+
+    股息率 = 近12个月每股分红 / 当前股价
+    每股分红 = sum(近12个月"派息") / 10  (新浪"派息"字段是每10股金额)
+    current_price <= 0 或无分红记录返回 0.0。
+    """
+    if current_price <= 0:
+        return 0.0
+
+    cached = cache.fetch_records(
+        table=DIVIDEND_TABLE,
+        filters={COL_CODE: symbol},
+        ttl_seconds=ttl_seconds,
+        order_by='"公告日期" DESC',
+    )
+    df = _records_to_df(cached) if cached else pd.DataFrame()
+
+    if df.empty:
+        try:
+            raw = _call_with_retry(
+                lambda: ak.stock_history_dividend_detail(symbol=symbol, indicator="分红"),
+                "stock_history_dividend_detail",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"stock_history_dividend_detail error: {exc}")
+            return 0.0
+        if raw is None or raw.empty:
+            return 0.0
+        raw = raw.copy()
+        raw[COL_CODE] = symbol
+        cache.upsert_records(
+            DIVIDEND_TABLE,
+            raw.to_dict("records"),
+            key_columns=[COL_CODE, "公告日期"],
+        )
+        _log_cache_upsert(DIVIDEND_TABLE, symbol, len(raw))
+        df = raw
+
+    if df.empty or "除权除息日" not in df.columns:
+        return 0.0
+
+    work = df.copy()
+    work["除权除息日"] = pd.to_datetime(work["除权除息日"], errors="coerce")
+    cutoff = pd.Timestamp.now() - pd.Timedelta(days=365)
+    recent = work[work["除权除息日"] >= cutoff]
+    if recent.empty:
+        return 0.0
+
+    total_cash = pd.to_numeric(recent["派息"], errors="coerce").fillna(0).sum()
+    per_share = total_cash / 10.0
+    return per_share / current_price if current_price > 0 else 0.0
+
+
 def _indicators_has_new_period(cached_records: list[dict]) -> bool:
     """缓存里最新一条 日期 对应的季度，是否已经有下一季度应披露。"""
     if not cached_records:
@@ -251,6 +401,91 @@ def get_financial_indicators(
     return df
 
 
+def _parse_ths_amount(value) -> float:
+    """解析同花顺金额字符串: '281.54亿' -> 2.8154e10, '5931.07万' -> 5.93107e7, 'False'/'--' -> 0.0"""
+    if value is None:
+        return 0.0
+    s = str(value).strip()
+    if not s or s in {"False", "--", "nan", "NaN", "None"}:
+        return 0.0
+    multiplier = 1.0
+    if s.endswith("亿"):
+        multiplier = 1e8
+        s = s[:-1]
+    elif s.endswith("万"):
+        multiplier = 1e4
+        s = s[:-1]
+    try:
+        return float(s) * multiplier
+    except (ValueError, TypeError):
+        return 0.0
+
+
+# 同花顺利润表字段名(带"一、"/"三、"/"五、"前缀) -> 新浪字段名
+# 资产负债表和现金流量表字段名与新浪完全一致,无需映射
+_THS_INCOME_FIELD_MAP = {
+    "一、营业总收入": "营业总收入",
+    "其中：营业收入": "营业收入",
+    "二、营业总成本": "营业总成本",
+    "其中：营业成本": "营业成本",
+    "三、营业利润": "营业利润",
+    "四、利润总额": "利润总额",
+    "五、净利润": "净利润",
+    "（一）基本每股收益": "基本每股收益",
+    "（二）稀释每股收益": "稀释每股收益",
+}
+
+_THS_REPORT_FUNC_MAP = {
+    "资产负债表": "stock_financial_debt_ths",
+    "利润表": "stock_financial_benefit_ths",
+    "现金流量表": "stock_financial_cash_ths",
+}
+
+
+def _fetch_financial_report_ths(symbol: str, report_type: str) -> pd.DataFrame:
+    """用同花顺接口拉取财务报表,字段映射到与新浪相同的中文键名。
+
+    数据格式:同花顺返回"亿"/"万"字符串,需解析为元数值。
+    报告期字段:同花顺用"报告期",新浪用"报告日",统一为"报告日"(YYYY-MM-DD)。
+    利润表:同花顺字段名带"一、"/"三、"/"五、"前缀,需映射。
+    资产负债表/现金流量表:字段名与新浪完全一致,无需映射。
+    """
+    ak_func_name = _THS_REPORT_FUNC_MAP.get(report_type)
+    if not ak_func_name:
+        return pd.DataFrame()
+
+    ak_func = getattr(ak, ak_func_name, None)
+    if ak_func is None:
+        logger.warning("AkShare 不支持接口: %s", ak_func_name)
+        return pd.DataFrame()
+
+    df = _call_with_retry(
+        lambda: ak_func(symbol=symbol, indicator="按报告期"),
+        ak_func_name,
+    )
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    # 利润表字段映射
+    if report_type == "利润表":
+        df = df.rename(columns={k: v for k, v in _THS_INCOME_FIELD_MAP.items() if k in df.columns})
+
+    # 报告期 -> 报告日(格式 YYYY-MM-DD,与新浪一致)
+    if "报告期" in df.columns:
+        df[COL_REPORT_DATE] = pd.to_datetime(df["报告期"]).dt.strftime("%Y-%m-%d")
+        df = df.drop(columns=["报告期"])
+
+    # 数值列解析:"亿"/"万"字符串 -> 元(float)
+    for col in df.columns:
+        if col in (COL_REPORT_DATE, COL_CODE, COL_REPORT_TYPE):
+            continue
+        df[col] = df[col].apply(_parse_ths_amount)
+
+    df[COL_CODE] = symbol
+    df[COL_REPORT_TYPE] = report_type
+    return df
+
+
 def get_financial_report(
     symbol: str,
     report_type: str,
@@ -291,9 +526,15 @@ def get_financial_report(
         "stock_financial_report_sina",
     )
     if df is None or df.empty:
+        logger.warning(
+            "⚠️ 新浪财报报表失败，尝试同花顺 fallback: %s %s",
+            symbol, report_type,
+        )
+        df = _fetch_financial_report_ths(symbol, report_type)
+    if df is None or df.empty:
         if cached:
             logger.warning(
-                "⚠️ 远程拉取财报报表失败，降级返回缓存: %s %s (缓存行数=%d)",
+                "⚠️ 新浪+同花顺均失败，降级返回缓存: %s %s (缓存行数=%d)",
                 symbol, report_type, len(cached),
             )
             return cached_df
@@ -487,7 +728,9 @@ def _fetch_kline_via_akshare(
         "high": df.get("high", 0.0),
         "low": df.get("low", 0.0),
         "close": df.get("close", 0.0),
-        "volume": df.get("volume", 0.0),
+        # AkShare 成交量单位是"手",统一为"股"(* 100)与其他源对齐
+        "volume": df.get("volume", 0.0) * 100,
+        # AkShare 成交额单位已是"元",无需转换
         "amount": df.get("amount", 0.0),
         "amplitude": df["amplitude"].fillna(0),
         "pct_change": (df["pctChg"] / 100.0).fillna(0) if "pctChg" in df.columns else 0.0,
@@ -495,6 +738,91 @@ def _fetch_kline_via_akshare(
         "turnover": (df["turn"] / 100.0).fillna(0) if "turn" in df.columns else 0.0,
     })
     return result
+
+
+def _get_tushare_client():
+    """Lazily build a TushareClient; returns None if TUSHARE_TOKEN unset."""
+    token = os.getenv("TUSHARE_TOKEN")
+    if not token:
+        return None
+    from valor.adapters.data.tushare_client import TushareClient
+
+    return TushareClient(token=token)
+
+
+def _tushare_available() -> bool:
+    return bool(os.getenv("TUSHARE_TOKEN"))
+
+
+def _fetch_kline_via_tushare(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    adjust: str,
+) -> pd.DataFrame:
+    """Fetch daily K-line via Tushare ``daily`` as third-tier fallback.
+
+    Tushare only provides unadjusted quotes on the basic tier, so
+    ``adjust`` is ignored and ``adjust_flag`` is recorded as "".
+    Returns DataFrame with the same schema as _prepare_history_frame.
+    """
+    from valor.adapters.data.tushare_client import TushareClient, TushareUnavailable
+    from valor.adapters.data.unit_conversion import (
+        build_unified_kline_df,
+        compute_amplitude,
+        pct_to_decimal,
+        to_shares,
+        to_yuan,
+    )
+
+    client = _get_tushare_client()
+    if client is None or not client.available:
+        logger.warning("Tushare 不可用(TUSHARE_TOKEN 未配置或初始化失败)")
+        return pd.DataFrame()
+
+    ts_code = TushareClient.to_ts_code(symbol)
+    try:
+        raw = client.query_daily(ts_code, start_date, end_date)
+    except TushareUnavailable as exc:
+        logger.warning("Tushare 限速或不可用: %s [%s -> %s] (%s)", symbol, start_date, end_date, exc)
+        return pd.DataFrame()
+
+    if raw is None or raw.empty:
+        logger.warning("Tushare daily 返回空: %s [%s -> %s]", symbol, start_date, end_date)
+        return pd.DataFrame()
+
+    raw = raw.sort_values("trade_date").reset_index(drop=True)
+
+    open_ = pd.to_numeric(raw.get("open"), errors="coerce").fillna(0.0)
+    high = pd.to_numeric(raw.get("high"), errors="coerce").fillna(0.0)
+    low = pd.to_numeric(raw.get("low"), errors="coerce").fillna(0.0)
+    close = pd.to_numeric(raw.get("close"), errors="coerce").fillna(0.0)
+    preclose = pd.to_numeric(raw.get("pre_close"), errors="coerce").fillna(0.0)
+    change_amount = pd.to_numeric(raw.get("change"), errors="coerce").fillna(0.0)
+    pct_change = raw["pct_chg"].apply(pct_to_decimal) if "pct_chg" in raw.columns else 0.0
+    # Tushare vol 单位是"手",amount 单位是"千元";统一为"股"和"元"
+    volume = raw["vol"].apply(to_shares) if "vol" in raw.columns else 0.0
+    amount = raw["amount"].apply(to_yuan) if "amount" in raw.columns else 0.0
+    amplitude = [
+        compute_amplitude(h, l, p)
+        for h, l, p in zip(high.tolist(), low.tolist(), preclose.tolist())
+    ]
+
+    return build_unified_kline_df(
+        symbol=symbol,
+        adjust="",
+        date=raw["trade_date"],
+        open=open_,
+        high=high,
+        low=low,
+        close=close,
+        volume=volume,
+        amount=amount,
+        amplitude=amplitude,
+        pct_change=pct_change,
+        change_amount=change_amount,
+        turnover=[0.0] * len(raw),
+    )
 
 
 def _cache_history_rows(df: pd.DataFrame) -> None:
@@ -574,13 +902,20 @@ def get_price_history_df(
                 symbol, start_str, end_str, exc,
             )
             prepared = _fetch_kline_via_akshare(symbol, start_str, end_str, adjust)
+            # Tushare 第三备选(需 TUSHARE_TOKEN 配置)
+            if prepared.empty and _tushare_available():
+                logger.warning(
+                    "⚠️ AkShare K线也失败，降级 tushare: %s [%s -> %s]",
+                    symbol, start_str, end_str,
+                )
+                prepared = _fetch_kline_via_tushare(symbol, start_str, end_str, adjust)
 
         if not prepared.empty:
             _cache_history_rows(prepared)
             new_frames.append(prepared)
         else:
             logger.warning(
-                "⚠️ K线双源均失败: %s [%s -> %s]，跳过该段（已有缓存段仍可用）",
+                "⚠️ K线三源均失败: %s [%s -> %s]，跳过该段（已有缓存段仍可用）",
                 symbol, start_str, end_str,
             )
 
@@ -679,13 +1014,39 @@ def get_stock_news(
 def get_latest_trading_day(today: Optional["date"] = None) -> "date":
     """Return the most recent A-share trading day on or before `today`.
 
-    Looks back up to 30 calendar days to skip weekends/holidays. Falls back
-    to the most recent weekday if the trade calendar fetch fails entirely.
+    Looks back up to 30 calendar days to skip weekends/holidays.
+
+    Source order (akshare first to avoid BaoStock's slow login):
+    1. akshare ``tool_trade_date_hist_sina`` -- full trade calendar, no login.
+    2. BaoStock ``query_trade_dates`` -- only when akshare fails.
+    3. Most recent weekday -- last resort when both remote sources fail.
     """
     from datetime import date as _date, timedelta
 
     today = today or _date.today()
     start = today - timedelta(days=30)
+    today_ts = pd.Timestamp(today).normalize()
+
+    # 1. akshare 全历史交易日历（无需登录，快）
+    try:
+        trade_cal = _call_with_retry(
+            lambda: ak.tool_trade_date_hist_sina(),
+            "tool_trade_date_hist_sina",
+        )
+        if trade_cal is not None and not trade_cal.empty and "trade_date" in trade_cal.columns:
+            all_dates = pd.to_datetime(trade_cal["trade_date"]).dt.normalize()
+            valid = all_dates[all_dates <= today_ts]
+            if not valid.empty:
+                latest = valid.max()
+                logger.debug("get_latest_trading_day via akshare: %s", latest.date())
+                return latest.date()
+            logger.warning("⚠️ akshare tool_trade_date_hist_sina 返回的交易日历中无 <= today 的日期")
+        else:
+            logger.warning("⚠️ akshare tool_trade_date_hist_sina 返回空，降级 BaoStock")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("⚠️ akshare tool_trade_date_hist_sina 异常，降级 BaoStock: %s", exc)
+
+    # 2. BaoStock 降级（需要登录，慢）
     try:
         df = query_trade_dates(start, today)
         if df is None or df.empty:
@@ -693,15 +1054,14 @@ def get_latest_trading_day(today: Optional["date"] = None) -> "date":
         df["calendar_date"] = pd.to_datetime(df["calendar_date"])
         trading = df[df["is_trading_day"].astype(int) == 1]["calendar_date"].dt.normalize()
         trading_days = sorted(trading.tolist())
-        today_ts = pd.Timestamp(today).normalize()
         for day in reversed(trading_days):
             if day <= today_ts:
+                logger.debug("get_latest_trading_day via BaoStock: %s", day.date())
                 return day.date()
-        # All trade dates in window are after today (unlikely); fall through
-    except Exception as exc:
-        logger.warning("⚠️ get_latest_trading_day 查询交易日历失败，降级最近工作日: %s", exc)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("⚠️ get_latest_trading_day BaoStock 也失败，降级最近工作日: %s", exc)
 
-    # Fallback: most recent weekday <= today
+    # 3. 最后兜底：最近工作日
     d = today
     while d.weekday() >= 5:  # Sat=5, Sun=6
         d -= timedelta(days=1)

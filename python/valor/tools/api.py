@@ -14,9 +14,11 @@ import pandas as pd
 from loguru import logger
 
 from valor.adapters.data.akshare_cache import (
+    get_dividend_yield,
     get_financial_indicators,
     get_financial_report,
     get_price_history_df,
+    get_valuation_indicator,
 )
 from valor.tools.market_snapshot import get_market_snapshot
 from valor.utils.config_loader import get_cache_refresh_flag
@@ -41,6 +43,9 @@ def _default_agent_metrics() -> dict[str, float]:
         "pe_ratio": 0.0,
         "price_to_book": 0.0,
         "price_to_sales": 0.0,
+        "dividend_yield": 0.0,
+        "book_value_per_share": 0.0,
+        "payout_ratio": 0.0,
     }
 
 
@@ -117,6 +122,13 @@ def get_financial_metrics(
             "流通市值": snapshot.get("market_cap", 0),
         }
 
+        logger.info("Fetching Baidu valuation indicators (PE-TTM/PB/market_cap)...")
+        valuation = get_valuation_indicator(symbol)
+        pe_ratio_val = _to_float(valuation.get("pe_ttm", 0.0)) if valuation else 0.0
+        price_to_book_val = _to_float(valuation.get("pb", 0.0)) if valuation else 0.0
+        realtime_market_cap = _to_float(valuation.get("market_cap", 0.0)) if valuation else 0.0
+        current_price = _to_float(valuation.get("price", 0.0)) if valuation else 0.0
+
         logger.info("Fetching Sina financial indicators...")
         financial_data = get_financial_indicators(
             symbol=symbol,
@@ -154,21 +166,38 @@ def get_financial_metrics(
             latest_income = pd.Series(dtype=float)
 
         total_revenue = _to_float(latest_income.get("营业总收入", 0))
-        total_market_cap = _to_float(stock_data.get("总市值", 0))
         net_inc = _to_float(latest_income.get("净利润", 0))
         eps = _to_float(latest_financial.get("加权每股收益(元)", 0))
 
-        # If market_cap is 0 (AkShare realtime down, snapshot missing), estimate from net_income * default PE
+        # Market cap priority: Baidu valuation -> snapshot -> net_income * 20 fallback
+        total_market_cap = realtime_market_cap or _to_float(stock_data.get("总市值", 0))
         if total_market_cap <= 0:
             if net_inc > 0:
                 total_market_cap = net_inc * 20.0  # default PE = 20 for mature A-share companies
             elif eps > 0:
                 total_market_cap = eps * 20.0  # rough fallback (EPS is per-share, assumes ~1 share)
 
-        # Compute PE / PB from available data (AkShare snapshot doesn't include these keys)
-        pe_ratio_val = total_market_cap / net_inc if total_market_cap > 0 and net_inc > 0 else 0.0
-        roe_val = _convert_percentage(latest_financial.get("净资产收益率(%)", 0))
-        price_to_book_val = pe_ratio_val * roe_val if pe_ratio_val > 0 and roe_val > 0 else 0.0
+        # PE/PB: prefer Baidu valuation (TTM-based), fallback to self-computed
+        if pe_ratio_val <= 0 and total_market_cap > 0 and net_inc > 0:
+            pe_ratio_val = total_market_cap / net_inc
+        if price_to_book_val <= 0:
+            roe_val = _convert_percentage(latest_financial.get("净资产收益率(%)", 0))
+            price_to_book_val = pe_ratio_val * roe_val if pe_ratio_val > 0 and roe_val > 0 else 0.0
+
+        # Dividend yield (TTM) from Sina dividend detail
+        dividend_yield_val = get_dividend_yield(symbol, current_price) if current_price > 0 else 0.0
+
+        # Book value per share = price / PB
+        book_value_per_share_val = (
+            current_price / price_to_book_val
+            if current_price > 0 and price_to_book_val > 0 else 0.0
+        )
+
+        # Payout ratio = dividend_yield × PE-TTM (反推: 分红/盈利 = (分红/股价) × (股价/盈利))
+        payout_ratio_val = (
+            dividend_yield_val * pe_ratio_val
+            if dividend_yield_val > 0 and pe_ratio_val > 0 else 0.0
+        )
 
         all_metrics = {
             "market_cap": total_market_cap,
@@ -188,6 +217,9 @@ def get_financial_metrics(
             "pe_ratio": pe_ratio_val,
             "price_to_book": price_to_book_val,
             "price_to_sales": total_market_cap / total_revenue if total_revenue > 0 else 0.0,
+            "dividend_yield": dividend_yield_val,
+            "book_value_per_share": book_value_per_share_val,
+            "payout_ratio": payout_ratio_val,
         }
 
         agent_metrics = {k: all_metrics[k] for k in _default_agent_metrics()}
@@ -234,9 +266,37 @@ def get_financial_statements(
             return default
         return _to_float(df.iloc[idx].get(key, default), default)
 
+    def _safe_get_any(df: pd.DataFrame, idx: int, keys: list[str], default: float = 0.0) -> float:
+        """Try multiple candidate field names; return first non-zero match.
+
+        Different data sources (Sina vs THS) and different stocks use slightly
+        different field names (e.g., '支付的现金' vs '所支付的现金'). Try each
+        candidate in order and return the first non-zero value.
+        """
+        if df.empty or idx >= len(df):
+            return default
+        row = df.iloc[idx]
+        for k in keys:
+            if k in row:
+                val = _to_float(row.get(k), default)
+                if val != 0.0:
+                    return val
+        return default
+
     balance_sheet = _get_report(_REPORT_BALANCE_SHEET)
     income_statement = _get_report(_REPORT_INCOME_STATEMENT)
     cash_flow = _get_report(_REPORT_CASH_FLOW)
+
+    # Field name candidates: Sina and THS use slightly different names for the same concept.
+    _CAPEX_FIELDS = [
+        "购建固定资产、无形资产和其他长期资产支付的现金",  # 新浪(部分股票)
+        "购建固定资产、无形资产和其他长期资产所支付的现金",  # 新浪(601728 等,带"所")
+    ]
+    _DEPRECIATION_FIELDS = [
+        "固定资产折旧、油气资产折耗、生产性生物资产折旧",  # 新浪间接法
+        "固定资产折旧、油气资产折耗和生产性生物资产折旧",  # 同花顺
+        "资产折旧、摊销",  # 简化版
+    ]
 
     def _build_item(idx: int) -> dict[str, float]:
         return {
@@ -245,39 +305,13 @@ def get_financial_statements(
             "operating_profit": _safe_get(income_statement, idx, "营业利润"),
             "working_capital": _safe_get(balance_sheet, idx, "流动资产合计")
             - _safe_get(balance_sheet, idx, "流动负债合计"),
-            "depreciation_and_amortization": _safe_get(
-                cash_flow, idx, "固定资产折旧、油气资产折耗、生产性生物资产折旧"
-            ),
-            "capital_expenditure": abs(_safe_get(
-                cash_flow, idx, "购建固定资产、无形资产和其他长期资产支付的现金"
-            )),
+            "depreciation_and_amortization": _safe_get_any(cash_flow, idx, _DEPRECIATION_FIELDS),
+            "capital_expenditure": abs(_safe_get_any(cash_flow, idx, _CAPEX_FIELDS)),
             "free_cash_flow": _safe_get(cash_flow, idx, "经营活动产生的现金流量净额")
-            - abs(_safe_get(cash_flow, idx, "购建固定资产、无形资产和其他长期资产支付的现金")),
+            - abs(_safe_get_any(cash_flow, idx, _CAPEX_FIELDS)),
         }
 
     return [_build_item(0), _build_item(1)]
-
-
-def _fetch_realtime_market_cap(symbol: str) -> float:
-    """Try to get market cap from AkShare valuation endpoint, return 0 on failure.
-
-    Uses stock_zh_valuation_baidu (single-ticker, lightweight) instead of
-    stock_zh_a_spot_em (full-market scan, frequently blocked by East Money).
-    The endpoint returns values in 亿元; convert to yuan.
-    """
-    try:
-        import akshare as ak
-
-        df = ak.stock_zh_valuation_baidu(
-            symbol=symbol, indicator="总市值", period="近一年"
-        )
-        if df is not None and not df.empty and "value" in df.columns:
-            mc_yi = _to_float(df.iloc[-1]["value"])
-            if mc_yi > 0:
-                return mc_yi * 1e8
-    except Exception:
-        pass
-    return 0.0
 
 
 def get_market_data(
@@ -290,12 +324,13 @@ def get_market_data(
     """Get market data (market cap, volume, etc.).
 
     Market cap priority:
-      1. AkShare valuation endpoint (stock_zh_valuation_baidu)
+      1. Baidu valuation endpoint (stock_zh_valuation_baidu, via get_valuation_indicator)
       2. LLM-generated snapshot (get_market_snapshot)
     """
     try:
-        # 1. Try AkShare realtime first for market cap
-        market_cap = _fetch_realtime_market_cap(symbol)
+        # 1. Try Baidu valuation first for market cap (stable, single-ticker)
+        valuation = get_valuation_indicator(symbol)
+        market_cap = _to_float(valuation.get("market_cap", 0.0)) if valuation else 0.0
 
         # 2. Fall back to LLM snapshot
         if market_cap <= 0:
