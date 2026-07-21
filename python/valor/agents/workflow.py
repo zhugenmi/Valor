@@ -205,6 +205,32 @@ _AGENT_MESSAGE_NAMES: Dict[str, str] = {
 }
 
 
+import json as _json
+from loguru import logger as _logger
+
+
+def _make_safe_agent_node(name: str, fn):
+    """Wrap an agent node function so exceptions don't abort the whole workflow.
+
+    On exception, returns a HumanMessage with error JSON and metadata.failed=True,
+    so the caller (stream.py) can yield agent_failed instead of component_generator.
+    """
+    def wrapped(state):
+        try:
+            return fn(state)
+        except Exception as exc:
+            _logger.exception("agent {} failed", name)
+            return {
+                "messages": [HumanMessage(
+                    content=_json.dumps({"error": str(exc)}),
+                    name=_AGENT_MESSAGE_NAMES[name],
+                )],
+                "data": {},
+                "metadata": {"failed": True, "error": str(exc)},
+            }
+    return wrapped
+
+
 def build_agents_workflow(agent_names: list[str]) -> StateGraph:
     """Build a workflow that runs market_data + N analysis agents in parallel.
 
@@ -226,7 +252,7 @@ def build_agents_workflow(agent_names: list[str]) -> StateGraph:
     workflow = StateGraph(GraphState)
     workflow.add_node("market_data", _run_market_data)
     for name in agent_names:
-        workflow.add_node(name, _AGENT_NODES[name])
+        workflow.add_node(name, _make_safe_agent_node(name, _AGENT_NODES[name]))
     workflow.set_entry_point("market_data")
     for name in agent_names:
         workflow.add_edge("market_data", name)  # fan-out parallel

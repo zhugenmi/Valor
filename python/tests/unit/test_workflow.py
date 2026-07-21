@@ -121,3 +121,24 @@ def test_build_agents_workflow_empty_list_raises():
 
     with pytest.raises(ValueError):
         build_agents_workflow([])
+
+
+def test_safe_agent_node_catches_exception(monkeypatch):
+    """单个 agent 抛异常时，应返回 failed metadata 而非中断。"""
+    from valor.agents import workflow as wf
+    from valor.agents.state import AgentState
+
+    def _boom(state: AgentState) -> dict:
+        raise RuntimeError("agent exploded")
+
+    # 替换 technicals 节点为会抛异常的函数
+    monkeypatch.setitem(wf._AGENT_NODES, "technicals", _boom)
+
+    # 构建包装后的节点
+    safe_node = wf._make_safe_agent_node("technicals", _boom)
+    result = safe_node({"messages": [], "data": {"ticker": "600519"}, "metadata": {}})
+    assert result["metadata"].get("failed") is True
+    assert "agent exploded" in result["metadata"]["error"]
+    # messages 里应有带 name 的 HumanMessage
+    assert len(result["messages"]) == 1
+    assert result["messages"][0].name == "technical_analyst_agent"
