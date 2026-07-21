@@ -65,8 +65,17 @@ class IntentResult:
 
     intent: IntentType
     ticker: str | None = None
-    agent: str | None = None
+    agents: list[str] = None  # type: ignore[assignment]  # 默认值在 __post_init__ 设置
     reply: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.agents is None:
+            self.agents = []
+
+    @property
+    def agent(self) -> str | None:
+        """Backward compat: 返回首个 agent 或 None。"""
+        return self.agents[0] if self.agents else None
 
 
 def _fallback(query: str) -> IntentResult:
@@ -89,23 +98,27 @@ def _coerce(raw: dict) -> IntentResult:
         if not _TICKER_RE.fullmatch(ticker):
             ticker = None
 
-    agent = raw.get("agent")
-    if agent not in VALID_AGENTS:
-        agent = None
+    # 支持 LLM 返回 agents 数组或单个 agent 字符串（向后兼容）
+    raw_agents = raw.get("agents")
+    if raw_agents is None and raw.get("agent") is not None:
+        raw_agents = [raw.get("agent")]
+    if not isinstance(raw_agents, list):
+        raw_agents = []
+    agents = [a for a in raw_agents if a in VALID_AGENTS]
 
-    if intent == "single_analysis" and agent is None:
+    if intent == "single_analysis" and not agents:
         intent = "full_analysis"
 
     if intent == "full_analysis" and ticker is None:
         return IntentResult(intent="chat", reply=_DEFAULT_CHAT_REPLY)
-    if intent == "single_analysis" and ticker is None and agent != "macro_industry":
+    if intent == "single_analysis" and ticker is None and "macro_industry" not in agents:
         return IntentResult(intent="chat", reply=_DEFAULT_CHAT_REPLY)
 
     reply = raw.get("reply") if intent == "chat" else None
     if intent == "chat" and not reply:
         reply = _DEFAULT_CHAT_REPLY
 
-    return IntentResult(intent=intent, ticker=ticker, agent=agent, reply=reply)
+    return IntentResult(intent=intent, ticker=ticker, agents=agents, reply=reply)
 
 
 async def classify_intent(query: str) -> IntentResult:
