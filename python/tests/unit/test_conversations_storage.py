@@ -43,6 +43,7 @@ def fresh_db():
     CREATE TABLE conversation_messages (
       id TEXT PRIMARY KEY,
       conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      thread_id TEXT,
       role TEXT NOT NULL,
       event_type TEXT,
       content TEXT,
@@ -141,3 +142,25 @@ def test_update_status(fresh_db):
 def test_delete_nonexistent_returns_false(fresh_db):
     with _patch_conn(fresh_db):
         assert delete_conversation("nope") is False
+
+
+def test_create_conversation_idempotent_on_duplicate_id(fresh_db):
+    """重复 create_conversation 同 id 应静默忽略，不抛 IntegrityError。"""
+    now = datetime.now(UTC).isoformat()
+    conv = Conversation(
+        id="dup-1", agent_name="ValorAgent", title="first",
+        status="active", portfolio_id=None, ticker=None,
+        created_at=now, updated_at=now,
+    )
+    conv2 = Conversation(
+        id="dup-1", agent_name="ValorAgent", title="second",
+        status="active", portfolio_id=None, ticker=None,
+        created_at=now, updated_at=now,
+    )
+    with _patch_conn(fresh_db):
+        create_conversation(conv)
+        # 第二次同 id 不应抛异常，且保留首次记录的 title
+        create_conversation(conv2)
+        result = list_conversations()
+    assert len(result) == 1
+    assert result[0].title == "first"
