@@ -17,6 +17,24 @@ from valor.portfolio.adapters import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _clear_price_cache(monkeypatch):
+    """Clear the class-level price cache before and after each test.
+
+    DataRouterPriceLookup uses a class-level dict so instances share state,
+    which is desirable in production but causes cross-test pollution when
+    multiple tests mock the same (ticker, as_of) key with different prices.
+    Also force ``is_market_open`` to True so tests that mock
+    ``get_realtime_quote`` exercise the realtime path regardless of when
+    they run.
+    """
+    DataRouterPriceLookup._cache.clear()
+    from valor.portfolio import adapters
+    monkeypatch.setattr(adapters, "is_market_open", lambda now=None: True)
+    yield
+    DataRouterPriceLookup._cache.clear()
+
+
 @pytest.mark.asyncio
 async def test_price_lookup_realtime_success():
     """Price from realtime quote DataFrame (最新价 column)."""

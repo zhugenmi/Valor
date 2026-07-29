@@ -108,3 +108,58 @@ def test_cooldown_constants():
     """Sanity-check the cooldown constants."""
     assert _BLACKLIST_COOLDOWN_SEC == 30 * 60
     assert _OTHER_COOLDOWN_SEC == 60
+
+
+# ---------------------------------------------------------------------------
+# Index code detection: format_symbol / _is_index_symbol
+# ---------------------------------------------------------------------------
+
+
+def test_format_symbol_maps_sh_indexes_to_sh_prefix():
+    """SH-listed indexes (000300 etc.) must map to sh. prefix, not sz."""
+    from valor.adapters.data.baostock_client import format_symbol
+
+    assert format_symbol("000300") == "sh.000300"  # 沪深300
+    assert format_symbol("000016") == "sh.000016"  # 上证50
+    assert format_symbol("000905") == "sh.000905"  # 中证500
+    assert format_symbol("000852") == "sh.000852"  # 中证1000
+    assert format_symbol("000010") == "sh.000010"  # 上证180
+
+
+def test_format_symbol_keeps_sz_indexes_and_stocks_unchanged():
+    """SZ indexes (399xxx) and stocks keep their existing mapping."""
+    from valor.adapters.data.baostock_client import format_symbol
+
+    assert format_symbol("399001") == "sz.399001"  # 深证成指
+    assert format_symbol("399006") == "sz.399006"  # 创业板指
+    assert format_symbol("600519") == "sh.600519"  # 茅台 (stock, unchanged)
+    assert format_symbol("000858") == "sz.000858"  # 五粮液 (stock, unchanged)
+    # 000001 is ambiguous (上证指数 vs 平安银行); default to stock (sz.)
+    assert format_symbol("000001") == "sz.000001"
+
+
+def test_format_symbol_passes_through_prefixed_codes():
+    """Already-prefixed codes are returned lowercased unchanged."""
+    from valor.adapters.data.baostock_client import format_symbol
+
+    assert format_symbol("sh.000300") == "sh.000300"
+    assert format_symbol("SZ.399001") == "sz.399001"
+
+
+def test_is_index_symbol_detects_indexes():
+    from valor.adapters.data.baostock_client import _is_index_symbol
+
+    assert _is_index_symbol("000300") is True
+    assert _is_index_symbol("000905") is True
+    assert _is_index_symbol("399001") is True
+    assert _is_index_symbol("399006") is True
+
+
+def test_is_index_symbol_rejects_stocks():
+    from valor.adapters.data.baostock_client import _is_index_symbol
+
+    assert _is_index_symbol("600519") is False
+    assert _is_index_symbol("000858") is False
+    # 000001 is ambiguous - treated as stock unless caller prefixes sh.
+    assert _is_index_symbol("000001") is False
+    assert _is_index_symbol("sh.000001") is True

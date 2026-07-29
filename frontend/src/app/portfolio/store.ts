@@ -17,7 +17,7 @@ interface PortfolioState {
   clearError: () => void;
 }
 
-export const usePortfolioStore = create<PortfolioState>((set) => ({
+export const usePortfolioStore = create<PortfolioState>((set, get) => ({
   list: [],
   current: null,
   analytics: null,
@@ -37,17 +37,16 @@ export const usePortfolioStore = create<PortfolioState>((set) => ({
     }
   },
   fetchDetail: async (id) => {
-    set({ loading: true, error: null });
+    // Reset so the detail page shows a skeleton instead of the previous
+    // portfolio's holdings while we fetch the new one.
+    set({ loading: true, error: null, current: null, analytics: null });
     try {
-      const [pRes, aRes] = await Promise.all([
-        portfolioApi.get(id),
-        portfolioApi.analytics(id).catch(() => null),
-      ]);
+      const pRes = await portfolioApi.get(id);
       const p = (pRes as unknown as { data: Portfolio }).data ?? null;
-      const a = aRes
-        ? ((aRes as unknown as { data: PortfolioAnalytics }).data ?? null)
-        : null;
-      set({ current: p, analytics: a, loading: false });
+      // Render the static portfolio data immediately; analytics loads in the
+      // background and fills in market value / PnL / beta once available.
+      set({ current: p, loading: false });
+      get().fetchAnalytics(id);
     } catch (e) {
       set({ error: (e as Error).message, loading: false });
     }

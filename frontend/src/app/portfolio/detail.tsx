@@ -16,7 +16,7 @@ import RebalancePanel from "./components/RebalancePanel";
 import ReduceForm from "./components/ReduceForm";
 import StrategyList from "./components/StrategyList";
 import { usePortfolioStore } from "./store";
-import type { Lot } from "./types";
+import type { Lot, Portfolio } from "./types";
 
 export default function PortfolioDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -66,21 +66,36 @@ export default function PortfolioDetailPage() {
     if (!id) return;
     const val = cashInput.trim();
     if (!val || Number(val) < 0) return;
-    await portfolioApi.update(id, { cash: val } as Record<string, unknown>);
+    const res = await portfolioApi.update(id, { cash: val } as Record<string, unknown>);
     setEditingCash(false);
-    await fetchDetail(id);
-  }, [id, cashInput, fetchDetail]);
+    // Cash changes don't affect market data - refresh just the portfolio
+    // snapshot instead of re-running the full analytics pipeline.
+    const p = (res as unknown as { data: Portfolio }).data ?? null;
+    if (p) usePortfolioStore.setState({ current: p });
+  }, [id, cashInput]);
 
   const saveName = useCallback(async () => {
     if (!id) return;
     const val = nameInput.trim();
     if (!val) return;
-    await portfolioApi.update(id, { name: val } as Record<string, unknown>);
+    const res = await portfolioApi.update(id, { name: val } as Record<string, unknown>);
     setEditingName(false);
-    await fetchDetail(id);
-  }, [id, nameInput, fetchDetail]);
+    const p = (res as unknown as { data: Portfolio }).data ?? null;
+    if (p) usePortfolioStore.setState({ current: p });
+  }, [id, nameInput]);
 
-  if (!current || !id) return <div className="p-6">加载中...</div>;
+  if (!id) return null;
+  if (!current) {
+    return (
+      <div className="mx-auto w-full max-w-6xl p-6">
+        <div className="mb-6 animate-pulse">
+          <div className="mb-2 h-8 w-48 rounded bg-muted" />
+          <div className="h-4 w-96 rounded bg-muted" />
+        </div>
+        <div className="h-64 rounded bg-muted" />
+      </div>
+    );
+  }
 
   function qtyOf(ticker: string): number {
     const h = current?.holdings.find((x) => x.ticker === ticker);
@@ -131,6 +146,8 @@ export default function PortfolioDetailPage() {
               <span className="font-medium text-foreground">
                 {formatMoney(analytics.total_market_value)}
               </span>
+            ) : analyticsLoading ? (
+              <span className="inline-block h-4 w-20 animate-pulse rounded bg-muted" />
             ) : (
               <span className="text-muted-foreground">—</span>
             )}

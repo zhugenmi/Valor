@@ -321,11 +321,15 @@ async def get_analytics(pid: str, router_obj: DataRouter = Depends(get_data_rout
         raise HTTPException(status_code=404, detail="portfolio not found")
     price_lookup = DataRouterPriceLookup(router_obj)
     sector_lookup = DataRouterSectorLookup(router_obj)
-    try:
-        hist_lookup = DataRouterHistoricalLookup(router_obj)
-        result = await compute_analytics(p, price_lookup, sector_lookup=sector_lookup, historical_lookup=hist_lookup)
-    except Exception:
-        result = await compute_analytics(p, price_lookup)
+    hist_lookup = DataRouterHistoricalLookup(router_obj)
+    # compute_analytics now tolerates per-lookup failures internally (sector /
+    # historical lookups return None / empty on error, price lookups skip the
+    # holding), so we don't need an outer retry that would re-fetch everything.
+    result = await compute_analytics(
+        p, price_lookup,
+        sector_lookup=sector_lookup,
+        historical_lookup=hist_lookup,
+    )
     return ok(result.model_dump(mode="json"))
 
 
@@ -341,7 +345,19 @@ async def create_strategy(pid: str, body: StrategyRequest, router_obj: DataRoute
         raise HTTPException(status_code=404, detail="portfolio not found")
     price_lookup = DataRouterPriceLookup(router_obj)
     hist_lookup = DataRouterHistoricalLookup(router_obj)
-    prices = {t: await price_lookup.get(t, _dt.date.today()) for t in body.tickers}
+    # Fetch all ticker prices in parallel (was: serial dict comprehension).
+    today = _dt.date.today()
+    price_results = await asyncio.gather(
+        *[price_lookup.get(t, today) for t in body.tickers],
+        return_exceptions=True,
+    )
+    prices: dict[str, Decimal] = {}
+    for t, res in zip(body.tickers, price_results, strict=True):
+        if isinstance(res, Exception):
+            continue
+        prices[t] = res
+    if not prices:
+        raise HTTPException(status_code=503, detail="failed to fetch any ticker prices")
     result = await allocate(body.method, body.tickers, prices, price_lookup, hist_lookup, body.params)
     strat = Strategy(
         strategy_id=storage.gen_strategy_id(),

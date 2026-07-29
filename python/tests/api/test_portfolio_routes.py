@@ -20,10 +20,19 @@ def app_client(portfolio_dir, tmp_db):
 
 
 @pytest.fixture
-def mock_data_router():
+def mock_data_router(monkeypatch):
     """Set up dependency override for get_data_router."""
     from valor.server.main import app
     from valor.server.routes.portfolio import get_data_router
+    from valor.portfolio.adapters import DataRouterPriceLookup
+    from valor.portfolio import adapters as portfolio_adapters
+
+    # Clear the class-level price cache so a cached price from a previous test
+    # (which may have used a different mock) doesn't leak into this one.
+    DataRouterPriceLookup._cache.clear()
+    # Force market-open so tests that mock get_realtime_quote exercise the
+    # realtime path regardless of when the test runs.
+    monkeypatch.setattr(portfolio_adapters, "is_market_open", lambda now=None: True)
 
     m = MagicMock()
     m.get_realtime_quote = AsyncMock(return_value=pd.DataFrame([{"price": "100"}]))

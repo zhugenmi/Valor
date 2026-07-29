@@ -1,11 +1,22 @@
 """Portfolio analytics. License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial."""
 from __future__ import annotations
+import asyncio
 from datetime import date
 from decimal import Decimal
 from typing import Protocol
 import numpy as np
 from pydantic import BaseModel
 from valor.portfolio.models import Portfolio
+from valor.utils.logging_config import setup_logger
+
+logger = setup_logger("portfolio.analytics")
+
+# Concurrency limits to avoid overwhelming upstream data sources (AkShare etc.).
+# Realtime quotes are light and already fail-fast via _spot_proxy (max_attempts=1);
+# financial indicators and daily history are heavier, so use a tighter cap.
+_PRICE_SEMAPHORE = asyncio.Semaphore(10)
+_SECTOR_SEMAPHORE = asyncio.Semaphore(5)
+_HISTORY_SEMAPHORE = asyncio.Semaphore(5)
 
 
 class PriceLookup(Protocol):
@@ -18,6 +29,33 @@ class SectorLookup(Protocol):
 
 class HistoricalLookup(Protocol):
     async def get_returns(self, ticker: str, days: int) -> np.ndarray: ...
+
+
+async def _safe_price_get(lookup: PriceLookup, ticker: str, as_of: date) -> Decimal | None:
+    async with _PRICE_SEMAPHORE:
+        try:
+            return await lookup.get(ticker, as_of)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("price lookup failed for %s: %s", ticker, exc)
+            return None
+
+
+async def _safe_sector_get(lookup: SectorLookup, ticker: str) -> str | None:
+    async with _SECTOR_SEMAPHORE:
+        try:
+            return await lookup.get(ticker)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("sector lookup failed for %s: %s", ticker, exc)
+            return None
+
+
+async def _safe_returns_get(lookup: HistoricalLookup, ticker: str, days: int) -> np.ndarray:
+    async with _HISTORY_SEMAPHORE:
+        try:
+            return await lookup.get_returns(ticker, days)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("returns lookup failed for %s: %s", ticker, exc)
+            return np.array([])
 
 
 class PositionMetric(BaseModel):
@@ -69,20 +107,31 @@ async def compute_analytics(
     historical_lookup: HistoricalLookup | None = None,
 ) -> PortfolioAnalytics:
     as_of = as_of or date.today()
-    positions: list[PositionMetric] = []
+
+    # Phase 1: pre-compute static fields per holding (no I/O).
+    # Tuple = (holding, qty, cost_value, avg_cost, realized_pnl).
+    static: list[tuple[object, int, Decimal, Decimal, Decimal]] = []
     for h in portfolio.holdings:
         qty = sum(lot.quantity for lot in h.lots)
         if qty == 0:
             continue
         cost_value = sum(lot.quantity * lot.cost_price for lot in h.lots) + sum(lot.fees for lot in h.lots)
         avg_cost = cost_value / Decimal(qty) if qty else Decimal("0")
-        price = await price_lookup.get(h.ticker, as_of)
+        realized = sum((s.realized_pnl for s in h.sell_lots), Decimal("0"))
+        static.append((h, qty, cost_value, avg_cost, realized))
+
+    # Phase 2: fetch all prices in parallel. Failed lookups return None and the
+    # corresponding holding is skipped (logged via _safe_price_get).
+    prices = await asyncio.gather(
+        *[_safe_price_get(price_lookup, h.ticker, as_of) for h, *_ in static]
+    )
+
+    positions: list[PositionMetric] = []
+    for (h, qty, cost_value, avg_cost, realized), price in zip(static, prices, strict=True):
+        if price is None:
+            continue
         market_value = Decimal(qty) * price
         pnl = market_value - cost_value
-        realized = sum(
-            (s.realized_pnl for s in h.sell_lots),
-            Decimal("0"),
-        )
         positions.append(PositionMetric(
             ticker=h.ticker, name=h.name, quantity=qty, cost_price=avg_cost,
             current_price=price, market_value=market_value, cost_value=cost_value,
@@ -105,10 +154,14 @@ async def compute_analytics(
         top1_weight=top1, top5_weight=top5, herfindahl_index=hhi,
         num_holdings=len(positions), effective_holdings=eff,
     )
+
+    # Phase 3: sector exposure in parallel (tolerant of per-ticker failures).
     sector_exposure: dict[str, float] = {}
-    if sector_lookup:
-        for p in positions:
-            sec = await sector_lookup.get(p.ticker)
+    if sector_lookup and positions:
+        sectors = await asyncio.gather(
+            *[_safe_sector_get(sector_lookup, p.ticker) for p in positions]
+        )
+        for p, sec in zip(positions, sectors, strict=True):
             if sec:
                 p.sector = sec
                 sector_exposure[sec] = sector_exposure.get(sec, 0.0) + p.weight
@@ -116,21 +169,25 @@ async def compute_analytics(
         if unknown_w > 0:
             sector_exposure["未知"] = unknown_w
 
+    # Phase 4: portfolio beta - fetch benchmark + all position returns in parallel.
     portfolio_beta: float | None = None
-    if historical_lookup and portfolio.benchmark:
-        bench_ret = await historical_lookup.get_returns(portfolio.benchmark, 252)
-        betas: list[tuple[float, float]] = []
-        for p in positions:
-            rets = await historical_lookup.get_returns(p.ticker, 252)
-            if len(rets) < 30 or len(bench_ret) < 30:
-                continue
-            cov = np.cov(rets[-252:], bench_ret[-252:])[0, 1]
-            var = np.var(bench_ret[-252:])
-            beta = float(cov / var) if var > 0 else 1.0
-            p.beta = beta
-            betas.append((p.weight, beta))
-        if betas:
-            portfolio_beta = sum(w * b for w, b in betas)
+    if historical_lookup and portfolio.benchmark and positions:
+        bench_ret = await _safe_returns_get(historical_lookup, portfolio.benchmark, 252)
+        if len(bench_ret) >= 30:
+            rets_list = await asyncio.gather(
+                *[_safe_returns_get(historical_lookup, p.ticker, 252) for p in positions]
+            )
+            betas: list[tuple[float, float]] = []
+            for p, rets in zip(positions, rets_list, strict=True):
+                if len(rets) < 30:
+                    continue
+                cov = np.cov(rets[-252:], bench_ret[-252:])[0, 1]
+                var = np.var(bench_ret[-252:])
+                beta = float(cov / var) if var > 0 else 1.0
+                p.beta = beta
+                betas.append((p.weight, beta))
+            if betas:
+                portfolio_beta = sum(w * b for w, b in betas)
 
     return PortfolioAnalytics(
         portfolio_id=portfolio.portfolio_id, as_of=as_of,

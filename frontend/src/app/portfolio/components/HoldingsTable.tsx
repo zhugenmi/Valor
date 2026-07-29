@@ -65,7 +65,7 @@ const COLUMNS: ColumnDef[] = [
   },
   {
     field: "cost_price",
-    label: "买入均价",
+    label: "成本",
     className: "text-right",
     requiresAnalytics: true,
     getValue: (_, m) => (m ? Number(m.cost_price) : 0),

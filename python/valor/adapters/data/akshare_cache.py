@@ -17,6 +17,7 @@ from valor.adapters.data.sqlite_cache import AkshareSQLiteCache
 from valor.network.proxy_manager import ProxyManager
 from valor.adapters.data.baostock_client import (
     BaoStockUnavailable,
+    _is_index_symbol,
     query_history_k_data_plus,
     query_trade_dates,
 )
@@ -125,7 +126,27 @@ def _resolve_exchange_symbol(symbol: str) -> str:
     return f"sz{cleaned}"
 
 
+def is_market_open(now: Optional[datetime] = None) -> bool:
+    """Rough A-share trading-hours check: Mon-Fri 09:25-11:30, 13:00-15:00.
+
+    Intentionally avoids network lookups (trade calendar) so it's cheap to call
+    on every spot quote. Public holidays that fall on a weekday will still cause
+    one cache miss per ticker that day - acceptable, since the 10-minute TTL
+    caps the redundant calls and the next call re-populates the cache.
+    """
+    now = now or datetime.now()
+    if now.weekday() >= 5:  # Sat=5, Sun=6
+        return False
+    hhmm = now.hour * 100 + now.minute
+    return (925 <= hhmm <= 1130) or (1300 <= hhmm <= 1500)
+
+
 def get_stock_spot_row(symbol: str, ttl_seconds: int = 600) -> Optional[pd.Series]:
+    # When the market is closed the spot price is final for the day - extend
+    # the TTL to 24h so we don't re-hit AkShare every 10 minutes after close
+    # or over the weekend.
+    if not is_market_open():
+        ttl_seconds = max(ttl_seconds, 86400)
     # Check in-memory failure cache — avoids repeated 3-second retry storms
     # on the same ticker across multiple API calls (e.g. list + analytics).
     fail_ts = _failure_cache.get(symbol)
@@ -144,6 +165,12 @@ def get_stock_spot_row(symbol: str, ttl_seconds: int = 600) -> Optional[pd.Serie
         row = cached[0].copy()
         row.pop("缓存时间", None)
         return pd.Series(row)
+
+    # Outside trading hours the spot endpoint either fails or returns a stale
+    # intraday price that disagrees with the daily close. Skip the network call
+    # entirely so callers fall back to daily history (yesterday's close).
+    if not is_market_open():
+        return None
 
     df = _call_spot_quote(symbol)
     if df is None or df.empty:
@@ -561,6 +588,16 @@ def get_financial_report(
     return df
 
 
+def _exclude_today_if_before_close(
+    days: Sequence[pd.Timestamp],
+) -> list[pd.Timestamp]:
+    """Before 15:00 the daily K-line for today isn't available yet; drop it."""
+    if datetime.now().hour < 15:
+        today_ts = pd.Timestamp(datetime.now().date()).normalize()
+        return [d for d in days if pd.Timestamp(d).normalize() != today_ts]
+    return list(days)
+
+
 def _expected_trading_days(start_date: datetime, end_date: datetime) -> Sequence[pd.Timestamp]:
     if start_date > end_date:
         start_date, end_date = end_date, start_date
@@ -583,16 +620,16 @@ def _expected_trading_days(start_date: datetime, end_date: datetime) -> Sequence
                 start_ts = pd.Timestamp(start_date).normalize()
                 end_ts = pd.Timestamp(end_date).normalize()
                 mask = (all_dates >= start_ts) & (all_dates <= end_ts)
-                return all_dates.loc[mask].tolist()
+                return _exclude_today_if_before_close(all_dates.loc[mask].tolist())
         except Exception as exc2:
             logger.warning(
                 "⚠️ akshare tool_trade_date_hist_sina 也失败，最后降级 bdate_range: %s",
                 exc2,
             )
-        return pd.bdate_range(start=start_date, end=end_date)
+        return _exclude_today_if_before_close(pd.bdate_range(start=start_date, end=end_date))
     df["calendar_date"] = pd.to_datetime(df["calendar_date"])
     trading = df[df["is_trading_day"].astype(int) == 1]["calendar_date"].dt.normalize()
-    return trading.tolist()
+    return _exclude_today_if_before_close(trading.tolist())
 
 
 def _missing_segments(
@@ -681,16 +718,29 @@ def _fetch_kline_via_akshare(
     adjust_norm = (adjust or "").lower()
     ak_adjust = {"qfq": "qfq", "hfq": "hfq", "": "", "none": ""}.get(adjust_norm, "qfq")
 
-    df = _call_with_retry(
-        lambda: ak.stock_zh_a_hist(
-            symbol=symbol,
-            period="daily",
-            start_date=start_date.replace("-", ""),
-            end_date=end_date.replace("-", ""),
-            adjust=ak_adjust,
-        ),
-        "stock_zh_a_hist",
-    )
+    # Indexes (000300 etc.) must use index_zh_a_hist; stock_zh_a_hist returns
+    # empty for index codes. index_zh_a_hist has no adjust parameter.
+    if _is_index_symbol(symbol):
+        df = _call_with_retry(
+            lambda: ak.index_zh_a_hist(
+                symbol=symbol,
+                period="daily",
+                start_date=start_date.replace("-", ""),
+                end_date=end_date.replace("-", ""),
+            ),
+            "index_zh_a_hist",
+        )
+    else:
+        df = _call_with_retry(
+            lambda: ak.stock_zh_a_hist(
+                symbol=symbol,
+                period="daily",
+                start_date=start_date.replace("-", ""),
+                end_date=end_date.replace("-", ""),
+                adjust=ak_adjust,
+            ),
+            "stock_zh_a_hist",
+        )
     if df is None or df.empty:
         return pd.DataFrame()
 
@@ -804,8 +854,8 @@ def _fetch_kline_via_tushare(
     volume = raw["vol"].apply(to_shares) if "vol" in raw.columns else 0.0
     amount = raw["amount"].apply(to_yuan) if "amount" in raw.columns else 0.0
     amplitude = [
-        compute_amplitude(h, l, p)
-        for h, l, p in zip(high.tolist(), low.tolist(), preclose.tolist())
+        compute_amplitude(h, lo, p)
+        for h, lo, p in zip(high.tolist(), low.tolist(), preclose.tolist())
     ]
 
     return build_unified_kline_df(
@@ -896,7 +946,7 @@ def get_price_history_df(
                 adjust=adjust,
             )
             prepared = _prepare_history_frame(raw, symbol, adjust)
-        except (BaoStockUnavailable, RuntimeError) as exc:
+        except (BaoStockUnavailable, RuntimeError, IndexError) as exc:
             logger.warning(
                 "⚠️ BaoStock K线拉取失败，降级 akshare: %s [%s -> %s] (%s)",
                 symbol, start_str, end_str, exc,

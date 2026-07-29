@@ -504,3 +504,118 @@ def test_get_price_history_df_falls_back_to_tushare_when_baostock_and_akshare_fa
     assert len(cached) >= 1
     # Verify unit conversion persisted to cache (vol 1000 手 -> 100000 股)
     assert cached[0]["volume"] == pytest.approx(1000.0 * 100)
+
+
+# ---------------------------------------------------------------------------
+# Index code handling: _fetch_kline_via_akshare routes to index_zh_a_hist
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_kline_via_akshare_uses_index_endpoint_for_benchmark():
+    """Index codes (000300) must use ak.index_zh_a_hist, not ak.stock_zh_a_hist."""
+    with patch("valor.adapters.data.akshare_cache.ak.index_zh_a_hist",
+               return_value=_fake_akshare_df()) as mock_idx, \
+         patch("valor.adapters.data.akshare_cache.ak.stock_zh_a_hist",
+               side_effect=AssertionError("stock_zh_a_hist should not be called for indexes")):
+        df = _fetch_kline_via_akshare(
+            symbol="000300",
+            start_date="2026-07-15",
+            end_date="2026-07-17",
+            adjust="qfq",
+        )
+
+    mock_idx.assert_called_once()
+    assert mock_idx.call_args.kwargs["symbol"] == "000300"
+    # index_zh_a_hist has no adjust parameter
+    assert "adjust" not in mock_idx.call_args.kwargs
+    # Column mapping is identical to the stock endpoint
+    assert "close" in df.columns
+    assert df["symbol"].iloc[0] == "000300"
+
+
+def test_fetch_kline_via_akshare_uses_stock_endpoint_for_stocks():
+    """Stock codes (000858) still use ak.stock_zh_a_hist with adjust."""
+    with patch("valor.adapters.data.akshare_cache.ak.stock_zh_a_hist",
+               return_value=_fake_akshare_df()) as mock_stock, \
+         patch("valor.adapters.data.akshare_cache.ak.index_zh_a_hist",
+               side_effect=AssertionError("index_zh_a_hist should not be called for stocks")):
+        _fetch_kline_via_akshare(
+            symbol="000858",
+            start_date="2026-07-15",
+            end_date="2026-07-17",
+            adjust="qfq",
+        )
+
+    mock_stock.assert_called_once()
+    assert mock_stock.call_args.kwargs["adjust"] == "qfq"
+
+
+# ---------------------------------------------------------------------------
+# IndexError fallback: baostock concurrent socket corruption
+# ---------------------------------------------------------------------------
+
+
+def test_get_price_history_df_falls_back_on_index_error(temp_cache):
+    """When BaoStock raises IndexError (concurrent socket corruption),
+    get_price_history_df must catch it and fall back to akshare, not propagate."""
+    start_dt = pd.Timestamp("2026-07-13")
+    end_dt = pd.Timestamp("2026-07-17")
+    trading_days = list(pd.bdate_range("2026-07-13", "2026-07-17").strftime("%Y-%m-%d"))
+
+    with patch("valor.adapters.data.akshare_cache.query_trade_dates",
+               return_value=_trade_dates_df("2026-07-13", "2026-07-17")), \
+         patch("valor.adapters.data.akshare_cache.query_history_k_data_plus",
+               side_effect=IndexError("list index out of range")), \
+         patch("valor.adapters.data.akshare_cache.ak.stock_zh_a_hist",
+               return_value=_fake_akshare_df_for_range(trading_days)):
+        df = ac_module.get_price_history_df(
+            symbol="000858",
+            start_date=start_dt,
+            end_date=end_dt,
+            adjust="qfq",
+        )
+
+    assert not df.empty
+    # akshare rows should be cached
+    cached = temp_cache.fetch_records(
+        table=ac_module.HISTORY_TABLE,
+        filters={"symbol": "000858", "adjust_flag": "qfq"},
+    )
+    assert len(cached) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Pre-close: today excluded from expected trading days
+# ---------------------------------------------------------------------------
+
+
+def test_exclude_today_if_before_close_drops_today_morning():
+    """Before 15:00, today is excluded from the trading days list."""
+    from datetime import datetime
+
+    today = pd.Timestamp("2026-07-29").normalize()
+    days = [today - pd.Timedelta(days=1), today, today + pd.Timedelta(days=1)]
+
+    with patch("valor.adapters.data.akshare_cache.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 29, 9, 0)
+        result = ac_module._exclude_today_if_before_close(days)
+
+    result_normalized = [pd.Timestamp(d).normalize() for d in result]
+    assert today not in result_normalized
+    assert len(result) == 2
+
+
+def test_exclude_today_if_before_close_keeps_today_after_close():
+    """At/after 15:00, today is kept in the trading days list."""
+    from datetime import datetime
+
+    today = pd.Timestamp("2026-07-29").normalize()
+    days = [today - pd.Timedelta(days=1), today]
+
+    with patch("valor.adapters.data.akshare_cache.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 29, 15, 30)
+        result = ac_module._exclude_today_if_before_close(days)
+
+    result_normalized = [pd.Timestamp(d).normalize() for d in result]
+    assert today in result_normalized
+    assert len(result) == 2

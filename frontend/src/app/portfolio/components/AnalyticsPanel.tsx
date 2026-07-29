@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import {
   Cell,
   Legend,
@@ -7,10 +6,9 @@ import {
   ResponsiveContainer,
   Tooltip,
 } from "recharts";
-import { portfolioApi } from "@/api/portfolio";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import type { PortfolioAnalytics } from "../types";
+import { usePortfolioStore } from "../store";
 
 const SECTOR_COLORS = [
   "#8884d8",
@@ -22,25 +20,13 @@ const SECTOR_COLORS = [
   "#ffc658",
 ];
 
-export default function AnalyticsPanel({ pid }: { pid: string }) {
-  const [analytics, setAnalytics] = useState<PortfolioAnalytics | null>(null);
-  const [loading, setLoading] = useState(false);
+export default function AnalyticsPanel({ pid: _pid }: { pid: string }) {
+  // Read from the shared store - the parent detail page already triggered
+  // fetchAnalytics on mount, so we must NOT fire a second request here.
+  const analytics = usePortfolioStore((s) => s.analytics);
+  const loading = usePortfolioStore((s) => s.analyticsLoading);
 
-  async function loadAnalytics() {
-    setLoading(true);
-    try {
-      const a = await portfolioApi.analytics(pid);
-      setAnalytics(a);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    loadAnalytics();
-  }, [pid]);
-
-  if (loading) return <div className="p-4">计算中...</div>;
+  if (loading && !analytics) return <div className="p-4">行情计算中...</div>;
   if (!analytics) return <div className="p-4">暂无数据</div>;
 
   const sectorData = Object.entries(analytics.sector_exposure ?? {}).map(

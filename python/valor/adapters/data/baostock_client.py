@@ -26,6 +26,11 @@ class BaoStockUnavailable(RuntimeError):
 _CIRCUIT_LOCK = threading.Lock()
 _CIRCUIT_REOPEN_AT: float | None = None  # monotonic timestamp when circuit re-closes
 
+# baostock's socketutil uses a global singleton socket with no locking; without
+# this mutex, concurrent asyncio.to_thread calls interleave send/recv and corrupt
+# responses (manifests as IndexError: list index out of range in history.py).
+_QUERY_LOCK = threading.Lock()
+
 FIELD_SET = [
     "date",
     "code",
@@ -46,6 +51,35 @@ ADJUST_FLAG_MAP = {
     "qfq": "2",   # pre-adjusted
     "hfq": "1",   # post-adjusted
 }
+
+# Shanghai-listed index codes that share the 000xxx prefix with SZ stocks.
+# 000001 is intentionally excluded (ambiguous: 上证指数 vs 平安银行); pass
+# "sh.000001" explicitly to query the index.
+_KNOWN_SH_INDEX_CODES: set[str] = {
+    "000016",  # 上证50
+    "000300",  # 沪深300
+    "000905",  # 中证500
+    "000852",  # 中证1000
+    "000010",  # 上证180
+}
+
+
+def _is_index_symbol(symbol: str) -> bool:
+    """Return True for index codes (SH 000xxx indexes + SZ 399xxx indexes).
+
+    - 399xxx (any prefix or bare) -> SZ index
+    - Known SH index codes (000300 etc.) -> SH index
+    - sh.000xxx (explicit SH prefix on 000xxx) -> SH index (covers 000001 上证指数)
+    - Bare 000001 is treated as the stock 平安银行 (ambiguous, default stock)
+    """
+    s = symbol.strip().lower()
+    if s.startswith("sh."):
+        code = s[3:]
+        return code in _KNOWN_SH_INDEX_CODES or code.startswith("000")
+    if s.startswith("sz."):
+        code = s[3:]
+        return code.startswith("399")
+    return s in _KNOWN_SH_INDEX_CODES or s.startswith("399")
 
 
 def _logout() -> None:
@@ -113,6 +147,8 @@ def format_symbol(symbol: str) -> str:
     lowered = symbol.lower()
     if lowered.startswith("sh.") or lowered.startswith("sz."):
         return lowered
+    if symbol in _KNOWN_SH_INDEX_CODES:
+        return f"sh.{symbol}"
     if symbol.startswith(("6", "9")):
         return f"sh.{symbol}"
     return f"sz.{symbol}"
@@ -137,17 +173,7 @@ def query_history_k_data_plus(
     adjust_flag = ADJUST_FLAG_MAP.get(adjust.lower() if adjust else "", "2")
 
     fields = ",".join(FIELD_SET)
-    rs = bs.query_history_k_data_plus(
-        bs_symbol,
-        fields,
-        start_date=start,
-        end_date=end,
-        frequency="d",
-        adjustflag=adjust_flag,
-    )
-    if rs.error_code == "10001001":  # not logged in
-        _logout()
-        ensure_login()
+    with _QUERY_LOCK:
         rs = bs.query_history_k_data_plus(
             bs_symbol,
             fields,
@@ -156,12 +182,23 @@ def query_history_k_data_plus(
             frequency="d",
             adjustflag=adjust_flag,
         )
-    if rs.error_code != "0":
-        raise RuntimeError(f"BaoStock query failed[{rs.error_code}]: {rs.error_msg}")
+        if rs.error_code == "10001001":  # not logged in
+            _logout()
+            ensure_login()
+            rs = bs.query_history_k_data_plus(
+                bs_symbol,
+                fields,
+                start_date=start,
+                end_date=end,
+                frequency="d",
+                adjustflag=adjust_flag,
+            )
+        if rs.error_code != "0":
+            raise RuntimeError(f"BaoStock query failed[{rs.error_code}]: {rs.error_msg}")
 
-    rows: List[List[str]] = []
-    while rs.error_code == "0" and rs.next():
-        rows.append(rs.get_row_data())
+        rows: List[List[str]] = []
+        while rs.error_code == "0" and rs.next():
+            rows.append(rs.get_row_data())
 
     df = pd.DataFrame(rows, columns=FIELD_SET)
     return df
@@ -171,16 +208,17 @@ def query_trade_dates(start_date: datetime | str, end_date: datetime | str) -> p
     ensure_login()
     start = _coerce_dates(start_date)
     end = _coerce_dates(end_date)
-    rs = bs.query_trade_dates(start_date=start, end_date=end)
-    if rs.error_code == "10001001":  # not logged in
-        _logout()
-        ensure_login()
+    with _QUERY_LOCK:
         rs = bs.query_trade_dates(start_date=start, end_date=end)
-    if rs.error_code != "0":
-        raise RuntimeError(f"BaoStock trade date query failed[{rs.error_code}]: {rs.error_msg}")
-    rows: List[List[str]] = []
-    while rs.error_code == "0" and rs.next():
-        rows.append(rs.get_row_data())
+        if rs.error_code == "10001001":  # not logged in
+            _logout()
+            ensure_login()
+            rs = bs.query_trade_dates(start_date=start, end_date=end)
+        if rs.error_code != "0":
+            raise RuntimeError(f"BaoStock trade date query failed[{rs.error_code}]: {rs.error_msg}")
+        rows: List[List[str]] = []
+        while rs.error_code == "0" and rs.next():
+            rows.append(rs.get_row_data())
     if not rows:
         return pd.DataFrame(columns=["calendar_date", "is_trading_day"])
     df = pd.DataFrame(rows, columns=rs.fields)
@@ -189,17 +227,18 @@ def query_trade_dates(start_date: datetime | str, end_date: datetime | str) -> p
 
 def query_stock_basic(code: str) -> pd.DataFrame:
     ensure_login()
-    rs = bs.query_stock_basic(code=code)
-    if rs.error_code == "10001001":  # not logged in
-        _logout()
-        ensure_login()
+    with _QUERY_LOCK:
         rs = bs.query_stock_basic(code=code)
-    if rs.error_code != "0":
-        raise RuntimeError(f"BaoStock stock basic query failed[{rs.error_code}]: {rs.error_msg}")
+        if rs.error_code == "10001001":  # not logged in
+            _logout()
+            ensure_login()
+            rs = bs.query_stock_basic(code=code)
+        if rs.error_code != "0":
+            raise RuntimeError(f"BaoStock stock basic query failed[{rs.error_code}]: {rs.error_msg}")
 
-    rows: List[List[str]] = []
-    while rs.error_code == "0" and rs.next():
-        rows.append(rs.get_row_data())
+        rows: List[List[str]] = []
+        while rs.error_code == "0" and rs.next():
+            rows.append(rs.get_row_data())
     if not rows:
         return pd.DataFrame(columns=rs.fields)
     df = pd.DataFrame(rows, columns=rs.fields)

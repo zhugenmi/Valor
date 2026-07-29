@@ -25,7 +25,12 @@ export default function PortfolioListPage() {
         </Button>
       </div>
       {error && <div className="mb-4 text-red-500">{error}</div>}
-      {loading && <div className="text-gray-500">加载中...</div>}
+      {loading && list.length === 0 && (
+        <div className="text-gray-500">加载中...</div>
+      )}
+      {loading && list.length > 0 && (
+        <div className="mb-3 text-muted-foreground text-sm">刷新中...</div>
+      )}
       <div className="mx-auto max-w-4xl">
         <div className="space-y-3">
           {list.map((p) => {
