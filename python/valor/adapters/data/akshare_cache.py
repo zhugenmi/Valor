@@ -35,6 +35,7 @@ COL_HEADLINE = "\u65b0\u95fb\u6807\u9898"
 COL_CACHE_DATE = "\u7f13\u5b58\u65e5\u671f"
 COL_ADJUST_TYPE = "\u590d\u6743\u7c7b\u578b"
 COL_TRADE_DATE = "trade_date"
+COL_INDUSTRY = "\u884c\u4e1a"
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 _default_cache_path = BASE_DIR / "data" / "market_data_cache.db"
@@ -1116,3 +1117,129 @@ def get_latest_trading_day(today: Optional["date"] = None) -> "date":
     while d.weekday() >= 5:  # Sat=5, Sun=6
         d -= timedelta(days=1)
     return d
+
+
+# ---------------------------------------------------------------------------
+# Stock industry classification (cached full-market scan)
+# ---------------------------------------------------------------------------
+
+STOCK_INDUSTRY_TABLE = "stock_industry"
+STOCK_INDUSTRY_TTL = 30 * 24 * 3600  # 30 天
+
+
+def get_stock_industry(symbol: str) -> Optional[str]:
+    """获取股票行业分类, 30 天 TTL 缓存, 全市场扫描写入。
+
+    Fallback: AkShare stock_zh_a_spot_em 失败 -> None (走 conglomerate 集群)。
+    """
+    cached = cache.fetch_records(
+        table=STOCK_INDUSTRY_TABLE,
+        filters={COL_CODE: symbol},
+        ttl_seconds=STOCK_INDUSTRY_TTL,
+        limit=1,
+    )
+    if cached:
+        industry = cached[0].get(COL_INDUSTRY)
+        if industry:
+            logger.info("📦 [cache] stock_industry 命中: %s -> %s", symbol, industry)
+            return str(industry)
+
+    try:
+        df = ak.stock_zh_a_spot_em()
+    except Exception as exc:
+        logger.error("AkShare stock_zh_a_spot_em error: %s", exc)
+        return None
+
+    if df is None or df.empty:
+        return None
+
+    code_col = next((c for c in df.columns if "代码" in str(c)), None)
+    industry_col = next((c for c in df.columns if "行业" in str(c)), None)
+    if code_col is None or industry_col is None:
+        logger.warning("stock_zh_a_spot_em columns unexpected: %s", list(df.columns))
+        return None
+
+    records: list[dict] = []
+    industry_for_symbol: Optional[str] = None
+    for _, row in df.iterrows():
+        code = str(row.get(code_col, ""))
+        ind = str(row.get(industry_col, ""))
+        if code and ind:
+            records.append({COL_CODE: code, COL_INDUSTRY: ind, COL_NAME: str(row.get("名称", ""))})
+            if code == symbol:
+                industry_for_symbol = ind
+
+    if records:
+        cache.upsert_records(STOCK_INDUSTRY_TABLE, records, key_columns=[COL_CODE])
+        logger.info("🆕 [cache] stock_industry 写入 %d 行（全市场）", len(records))
+
+    return industry_for_symbol
+
+
+# ---------------------------------------------------------------------------
+# Historical PB series (for percentile-based valuation)
+# ---------------------------------------------------------------------------
+
+HISTORY_PB_TABLE = "history_pb"
+HISTORY_PB_TTL = 7 * 24 * 3600  # 7 天
+
+
+def get_history_pb(symbol: str, years: int = 5) -> list[tuple[str, float]]:
+    """获取历史 PB 序列, 7 天 TTL 缓存。
+
+    数据源: ak.stock_zh_valuation_baidu(symbol, indicator="市净率", period="全部")
+    Fallback: 失败返回空列表 (下游 _compute_pb_percentile 返回 None, 指标跳过)。
+    """
+    cached = cache.fetch_records(
+        table=HISTORY_PB_TABLE,
+        filters={COL_CODE: symbol},
+        ttl_seconds=HISTORY_PB_TTL,
+        order_by=f'"{COL_DATE}" DESC',
+    )
+    if cached:
+        return [(str(r.get(COL_DATE)), float(r.get("pb", 0))) for r in cached if r.get("pb")]
+
+    try:
+        df = ak.stock_zh_valuation_baidu(symbol=symbol, indicator="市净率", period="全部")
+    except Exception as exc:
+        logger.warning("get_history_pb fetch failed for %s: %s", symbol, exc)
+        return []
+
+    if df is None or df.empty:
+        return []
+
+    # 预期列: 日期 / 数值
+    date_col = next((c for c in df.columns if "日期" in str(c) or "date" in str(c).lower()), None)
+    val_col = next((c for c in df.columns if "数值" in str(c) or "value" in str(c).lower() or "市净率" in str(c)), None)
+    if date_col is None or val_col is None:
+        logger.warning("stock_zh_valuation_baidu columns unexpected: %s", list(df.columns))
+        return []
+
+    # 过滤 years 年内数据
+    df[date_col] = pd.to_datetime(df[date_col])
+    cutoff = pd.Timestamp.now() - pd.Timedelta(days=365 * years)
+    df = df[df[date_col] >= cutoff]
+
+    records = [
+        {COL_CODE: symbol, COL_DATE: row[date_col].strftime("%Y-%m-%d"), "pb": float(row[val_col])}
+        for _, row in df.iterrows() if pd.notna(row[val_col])
+    ]
+    if records:
+        cache.upsert_records(HISTORY_PB_TABLE, records, key_columns=[COL_CODE, COL_DATE])
+
+    return [(r[COL_DATE], r["pb"]) for r in records]
+
+
+def _compute_pb_percentile(pb_series: list[tuple[str, float]], current_pb: float) -> float | None:
+    """计算当前 PB 在历史序列中的分位数 (0.0~1.0)。
+
+    Returns None if series < 2 points or current_pb invalid.
+    """
+    if not pb_series or len(pb_series) < 2 or current_pb is None or current_pb <= 0:
+        return None
+    values = [v for _, v in pb_series if v and v > 0]
+    if len(values) < 2:
+        return None
+    values_sorted = sorted(values)
+    rank = sum(1 for v in values_sorted if v < current_pb)
+    return rank / (len(values_sorted) - 1)
