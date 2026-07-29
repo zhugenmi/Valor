@@ -12,6 +12,27 @@ from valor.utils.prompt_loader import load_prompt, format_prompt
 # 初始化 logger
 logger = setup_logger('portfolio_management_agent')
 
+_DIMENSION_LABELS = {
+    "profitability": "盈利能力",
+    "growth": "成长性",
+    "financial_health": "财务健康",
+    "valuation": "估值",
+    "shareholder_return": "股东回报",
+}
+
+
+def _build_fundamental_block(fundamental_signal: dict | None) -> str:
+    """动态遍历 fundamentals reasoning 构建要点文本, 不硬编码维度 key."""
+    if not fundamental_signal:
+        return "   - 无数据"
+    reasoning = fundamental_signal.get("reasoning", {})
+    lines = []
+    for dim_name, dim_data in reasoning.items():
+        label = _DIMENSION_LABELS.get(dim_name, dim_name)
+        details = dim_data.get("details", "无数据") if isinstance(dim_data, dict) else "无数据"
+        lines.append(f"   - {label}: {details}")
+    return "\n".join(lines) if lines else "   - 无数据"
+
 ##### Portfolio Management Agent #####
 
 # Helper function to get the latest message by agent name
@@ -303,11 +324,9 @@ def format_decision(action: str, quantity: int, confidence: float, agent_signals
 1. 基本面分析 (权重30%):
    信号: {signal_to_chinese(fundamental_signal)}
    置信度: {fundamental_signal['confidence']*100:.0f if fundamental_signal else 0}%
+   行业集群: {fundamental_signal.get('industry_profile', {}).get('cluster_label', '通用') if fundamental_signal else '通用'}
    要点:
-   - 盈利能力: {fundamental_signal.get('reasoning', {}).get('profitability_signal', {}).get('details', '无数据') if fundamental_signal else '无数据'}
-   - 增长情况: {fundamental_signal.get('reasoning', {}).get('growth_signal', {}).get('details', '无数据') if fundamental_signal else '无数据'}
-   - 财务健康: {fundamental_signal.get('reasoning', {}).get('financial_health_signal', {}).get('details', '无数据') if fundamental_signal else '无数据'}
-   - 估值水平: {fundamental_signal.get('reasoning', {}).get('price_ratios_signal', {}).get('details', '无数据') if fundamental_signal else '无数据'}
+{_build_fundamental_block(fundamental_signal)}
 
 2. 估值分析 (权重35%):
    信号: {signal_to_chinese(valuation_signal)}
