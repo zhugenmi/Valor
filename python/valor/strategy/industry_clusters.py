@@ -36,6 +36,7 @@ class MetricSpec(BaseModel):
     missing_signal: str = "neutral"
     period: str = "annual"
     dynamic_baseline: str | None = None
+    baseline_multiplier: float = 1.0
     reference_only: bool = False
     description: str = ""
 
@@ -460,7 +461,9 @@ def _conglomerate_cluster() -> IndustryCluster:
                     MetricSpec(field="debt_to_equity", label="资产负债率",
                                judge=MetricJudge.THRESHOLD_LT, threshold=0.5),
                     MetricSpec(field="free_cash_flow_per_share", label="FCF/EPS",
-                               judge=MetricJudge.THRESHOLD_GT, threshold=0.0),
+                               judge=MetricJudge.THRESHOLD_GT, threshold=0.0,
+                               dynamic_baseline="earnings_per_share",
+                               baseline_multiplier=0.8),
                 ],
             ),
             DimensionSpec(

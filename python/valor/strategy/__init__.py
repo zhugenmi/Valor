@@ -10,6 +10,7 @@ from valor.strategy.industry_clusters import (
     MetricSpec,
 )
 from valor.strategy.cluster_resolver import resolve
+from valor.strategy.metric_evaluators import evaluate_dimension, evaluate_metric
 
 __all__ = [
     "INDUSTRY_CLUSTERS",
@@ -20,4 +21,6 @@ __all__ = [
     "MetricJudge",
     "FallbackSource",
     "resolve",
+    "evaluate_dimension",
+    "evaluate_metric",
 ]
