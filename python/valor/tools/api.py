@@ -14,10 +14,16 @@ import pandas as pd
 from loguru import logger
 
 from valor.adapters.data.akshare_cache import (
+    _compute_dividend_years,
+    _compute_pb_percentile,
+    get_bank_special_indicators,
+    get_dividend_history,
     get_dividend_yield,
     get_financial_indicators,
     get_financial_report,
+    get_history_pb,
     get_price_history_df,
+    get_r_and_d_expense,
     get_valuation_indicator,
 )
 from valor.tools.market_snapshot import get_market_snapshot
@@ -89,6 +95,7 @@ def get_financial_metrics(
     trace_state: dict | None = None,
     as_of_date: str | None = None,
     snapshot: dict[str, Any] | None = None,
+    cluster_hint: str | None = None,
 ) -> list[dict[str, Any]]:
     """Get financial indicator data for a ticker.
 
@@ -223,6 +230,87 @@ def get_financial_metrics(
         }
 
         agent_metrics = {k: all_metrics[k] for k in _default_agent_metrics()}
+
+        # 按集群追加专属指标 (带 fallback) + 衍生指标
+        cluster_extras: dict[str, Any] = {}
+        try:
+            balance_sheet_df = get_financial_report(
+                symbol, _REPORT_BALANCE_SHEET, force_refresh=refresh_financial_reports,
+            )
+            if cutoff is not None and not balance_sheet_df.empty and "报告日" in balance_sheet_df.columns:
+                try:
+                    balance_sheet_df["报告日"] = pd.to_datetime(balance_sheet_df["报告日"])
+                    balance_sheet_df = balance_sheet_df[balance_sheet_df["报告日"] <= cutoff]
+                except Exception:
+                    pass
+            if "报告日" in balance_sheet_df.columns:
+                balance_sheet_df = balance_sheet_df.sort_values("报告日", ascending=False)
+        except Exception:
+            balance_sheet_df = pd.DataFrame()
+
+        try:
+            cashflow_df = get_financial_report(
+                symbol, _REPORT_CASH_FLOW, force_refresh=refresh_financial_reports,
+            )
+            if cutoff is not None and not cashflow_df.empty and "报告日" in cashflow_df.columns:
+                try:
+                    cashflow_df["报告日"] = pd.to_datetime(cashflow_df["报告日"])
+                    cashflow_df = cashflow_df[cashflow_df["报告日"] <= cutoff]
+                except Exception:
+                    pass
+            if "报告日" in cashflow_df.columns:
+                cashflow_df = cashflow_df.sort_values("报告日", ascending=False)
+        except Exception:
+            cashflow_df = pd.DataFrame()
+
+        latest_cashflow = cashflow_df.iloc[0] if not cashflow_df.empty else pd.Series(dtype=float)
+
+        _CAPEX_FIELDS = [
+            "购建固定资产、无形资产和其他长期资产支付的现金",
+            "购建固定资产、无形资产和其他长期资产所支付的现金",
+        ]
+
+        # 集群专属指标
+        if cluster_hint == "financial":
+            cluster_extras.update(get_bank_special_indicators(symbol))
+        if cluster_hint == "cyclical_resource":
+            pb_series = get_history_pb(symbol, years=5)
+            pb_pct = _compute_pb_percentile(
+                pb_series,
+                current_price / price_to_book_val if price_to_book_val > 0 else 0,
+            )
+            if pb_pct is not None:
+                cluster_extras["pb_percentile_5y"] = pb_pct
+        if cluster_hint in ("pharma", "tmt"):
+            cluster_extras.update(get_r_and_d_expense(symbol))
+        if cluster_hint == "utility_transport":
+            cluster_extras["dividend_years"] = _compute_dividend_years(
+                get_dividend_history(symbol),
+            )
+
+        # 衍生指标 (COMPUTED, 所有集群都算)
+        try:
+            ext_balance = _extract_extended_balance_sheet_fields(balance_sheet_df, 0)
+            ext_income = _extract_extended_income_fields(income_statement, 0)
+            ext_prev = {
+                **_extract_extended_balance_sheet_fields(balance_sheet_df, 1),
+                **_extract_extended_income_fields(income_statement, 1),
+            }
+            derived = _compute_derived_metrics(
+                {
+                    **ext_balance,
+                    **ext_income,
+                    "operating_cash_flow": _to_float(latest_cashflow.get("经营活动产生的现金流量净额", 0)),
+                    "capital_expenditure": abs(_to_float(latest_cashflow.get(_CAPEX_FIELDS[0], 0))),
+                },
+                ext_prev,
+            )
+            cluster_extras.update(derived)
+        except Exception as exc:
+            logger.warning("derived metrics computation failed: {err}", err=exc)
+
+        agent_metrics.update(cluster_extras)
+
         logger.info("✓ Indicators built for {s}", s=symbol)
         return [agent_metrics]
 
