@@ -314,6 +314,137 @@ def get_financial_statements(
     return [_build_item(0), _build_item(1)]
 
 
+def _safe_div(numerator: float, denominator: float | None) -> float:
+    """Safe division returning 0.0 on zero / None denominator."""
+    if denominator is None or denominator == 0:
+        return 0.0
+    return numerator / denominator
+
+
+def _compute_derived_metrics(latest: dict, prev: dict | None) -> dict:
+    """从三表字段计算衍生指标。latest/prev 为 _build_item 风格的 dict。
+
+    返回字段: adj_debt_to_asset, net_debt_to_equity, cash_to_short_debt,
+    inventory_turnover, asset_turnover, asset_turnover_prev,
+    capex_to_depreciation, receivable_to_revenue, sales_expense_ratio,
+    ocf_to_net_profit, free_cash_flow, capex_to_ocf, gross_margin,
+    gross_margin_prev.
+    """
+    if not latest:
+        return {}
+    result: dict[str, float] = {}
+
+    total_liab = _to_float(latest.get("total_liabilities", 0))
+    total_assets = _to_float(latest.get("total_assets", 0))
+    advance = _to_float(latest.get("advance_from_customers", 0))
+    if total_assets - advance > 0:
+        result["adj_debt_to_asset"] = _safe_div(total_liab - advance, total_assets - advance)
+
+    short_loan = _to_float(latest.get("short_term_loan", 0))
+    long_loan = _to_float(latest.get("long_term_loan", 0))
+    bonds = _to_float(latest.get("bonds_payable", 0))
+    cash = _to_float(latest.get("monetary_capital", 0))
+    equity = _to_float(latest.get("total_equity", 0))
+    if equity > 0:
+        result["net_debt_to_equity"] = _safe_div(short_loan + long_loan + bonds - cash, equity)
+    if short_loan > 0:
+        result["cash_to_short_debt"] = _safe_div(cash, short_loan)
+
+    op_cost = _to_float(latest.get("operating_cost", 0))
+    inv = _to_float(latest.get("inventory", 0))
+    prev_inv = _to_float(prev.get("inventory", 0)) if prev else 0
+    avg_inv = (inv + prev_inv) / 2 if (inv + prev_inv) > 0 else 0
+    if avg_inv > 0:
+        result["inventory_turnover"] = _safe_div(op_cost, avg_inv)
+
+    revenue = _to_float(latest.get("operating_revenue", 0))
+    if total_assets > 0:
+        result["asset_turnover"] = _safe_div(revenue, total_assets)
+    if prev:
+        prev_revenue = _to_float(prev.get("operating_revenue", 0))
+        prev_assets = _to_float(prev.get("total_assets", 0))
+        if prev_assets > 0:
+            result["asset_turnover_prev"] = _safe_div(prev_revenue, prev_assets)
+
+    dep = _to_float(latest.get("depreciation_and_amortization", 0))
+    capex = _to_float(latest.get("capital_expenditure", 0))
+    if dep > 0:
+        result["capex_to_depreciation"] = _safe_div(capex, dep)
+
+    receivable = _to_float(latest.get("accounts_receivable", 0))
+    if revenue > 0:
+        result["receivable_to_revenue"] = _safe_div(receivable, revenue)
+
+    sales_exp = _to_float(latest.get("sales_expense", 0))
+    if revenue > 0:
+        result["sales_expense_ratio"] = _safe_div(sales_exp, revenue)
+
+    ocf = _to_float(latest.get("operating_cash_flow", 0))
+    net_inc = _to_float(latest.get("net_income", 0))
+    if net_inc > 0:
+        result["ocf_to_net_profit"] = _safe_div(ocf, net_inc)
+    result["free_cash_flow"] = ocf - capex
+    if ocf > 0:
+        result["capex_to_ocf"] = _safe_div(capex, ocf)
+
+    op_cost_for_gm = _to_float(latest.get("operating_cost", 0))
+    if revenue > 0:
+        result["gross_margin"] = _safe_div(revenue - op_cost_for_gm, revenue)
+    if prev:
+        prev_revenue_gm = _to_float(prev.get("operating_revenue", 0))
+        prev_cost = _to_float(prev.get("operating_cost", 0))
+        if prev_revenue_gm > 0:
+            result["gross_margin_prev"] = _safe_div(prev_revenue_gm - prev_cost, prev_revenue_gm)
+
+    return result
+
+
+def _extract_extended_balance_sheet_fields(balance_df, idx: int = 0) -> dict:
+    """从资产负债表提取扩展字段。"""
+    if balance_df is None or balance_df.empty or idx >= len(balance_df):
+        return {}
+    row = balance_df.iloc[idx]
+    _candidates = {
+        "total_liabilities": ["负债合计", "负债总计"],
+        "total_assets": ["资产总计", "资产合计"],
+        "total_equity": ["所有者权益合计", "股东权益合计", "净资产合计"],
+        "advance_from_customers": ["预收款项", "预收账款", "合同负债"],
+        "inventory": ["存货"],
+        "accounts_receivable": ["应收账款", "应收帐款"],
+        "short_term_loan": ["短期借款"],
+        "long_term_loan": ["长期借款"],
+        "bonds_payable": ["应付债券"],
+        "monetary_capital": ["货币资金"],
+    }
+    result = {}
+    for key, candidates in _candidates.items():
+        for c in candidates:
+            if c in row:
+                result[key] = _to_float(row.get(c), 0)
+                break
+    return result
+
+
+def _extract_extended_income_fields(income_df, idx: int = 0) -> dict:
+    """从利润表提取扩展字段。"""
+    if income_df is None or income_df.empty or idx >= len(income_df):
+        return {}
+    row = income_df.iloc[idx]
+    _candidates = {
+        "operating_cost": ["营业成本", "营业总成本"],
+        "sales_expense": ["销售费用"],
+        "operating_revenue": ["营业总收入", "营业收入"],
+        "net_income": ["净利润"],
+    }
+    result = {}
+    for key, candidates in _candidates.items():
+        for c in candidates:
+            if c in row:
+                result[key] = _to_float(row.get(c), 0)
+                break
+    return result
+
+
 def get_market_data(
     symbol: str,
     *,
