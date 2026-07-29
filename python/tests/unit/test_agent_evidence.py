@@ -115,7 +115,7 @@ def test_fundamentals_output_includes_evidence():
 
 
 def test_fundamentals_evidence_handles_missing_fields():
-    """Missing financial metrics should yield 0.0 in evidence, not raise."""
+    """Empty financial metrics should yield empty evidence dict, not raise."""
     state = {
         "messages": [],
         "data": {
@@ -131,15 +131,14 @@ def test_fundamentals_evidence_handles_missing_fields():
 
     assert "evidence" in content
     ev = content["evidence"]
-    assert ev["return_on_equity"] == 0.0
-    assert ev["pe_ratio"] == 0.0
-    assert ev["dividend_yield"] == 0.0
-    assert ev["book_value_per_share"] == 0.0
-    assert ev["payout_ratio"] == 0.0
+    # Config-driven engine: evidence is built dynamically from available metrics.
+    # With empty metrics, evidence is empty.
+    assert isinstance(ev, dict)
+    assert ev == {}
 
 
 def test_fundamentals_dividend_signal_scoring_bullish():
-    """股息率 >= 4% 应触发 bullish shareholder_return_signal."""
+    """股息率 >= 4% 应触发 bullish shareholder_return 维度."""
     metrics = _make_financial_metrics()
     metrics["dividend_yield"] = 0.0693  # 6.93% > 4%
     metrics["payout_ratio"] = 0.5  # 可持续
@@ -156,16 +155,16 @@ def test_fundamentals_dividend_signal_scoring_bullish():
     result = fundamentals_agent(state)
     content = json.loads(result["messages"][0].content)
 
-    assert "shareholder_return_signal" in content["reasoning"]
-    sig = content["reasoning"]["shareholder_return_signal"]
+    assert "shareholder_return" in content["reasoning"]
+    sig = content["reasoning"]["shareholder_return"]
     assert sig["signal"] == "bullish"
-    assert "6.93%" in sig["details"]
+    assert "0.0693" in sig["details"]
 
 
 def test_fundamentals_dividend_signal_scoring_bearish():
-    """股息率 < 1% 应触发 bearish shareholder_return_signal."""
+    """股息率 < 4% 应触发 bearish shareholder_return 维度."""
     metrics = _make_financial_metrics()
-    metrics["dividend_yield"] = 0.005  # 0.5% < 1%
+    metrics["dividend_yield"] = 0.005  # 0.5% < 4%
     state = {
         "messages": [],
         "data": {
@@ -179,12 +178,12 @@ def test_fundamentals_dividend_signal_scoring_bearish():
     result = fundamentals_agent(state)
     content = json.loads(result["messages"][0].content)
 
-    sig = content["reasoning"]["shareholder_return_signal"]
+    sig = content["reasoning"]["shareholder_return"]
     assert sig["signal"] == "bearish"
 
 
 def test_fundamentals_dividend_signal_flags_high_payout():
-    """股息率 bullish 但支付率 > 80% 应附加可持续性提示."""
+    """股息率 bullish 但支付率不影响维度评分 (config-driven 无特殊 payout 逻辑)."""
     metrics = _make_financial_metrics()
     metrics["dividend_yield"] = 0.05  # 5% > 4%, bullish
     metrics["payout_ratio"] = 1.5  # 150% > 80%, 不可持续
@@ -201,9 +200,12 @@ def test_fundamentals_dividend_signal_flags_high_payout():
     result = fundamentals_agent(state)
     content = json.loads(result["messages"][0].content)
 
-    sig = content["reasoning"]["shareholder_return_signal"]
+    sig = content["reasoning"]["shareholder_return"]
     assert sig["signal"] == "bullish"
-    assert "可持续性" in sig["details"]
+    # Config-driven engine: payout_ratio is not in the conglomerate cluster spec,
+    # so no sustainability note is generated. The signal is purely based on
+    # dividend_yield > 0.04 threshold.
+    assert "payout" not in sig["details"].lower()
 
 
 # ---------------------------------------------------------------------------
