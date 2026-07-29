@@ -121,3 +121,45 @@ def test_missing_cluster_defaults_to_conglomerate():
     result = fundamentals_agent(state)
     msg = json.loads(result["messages"][0].content)
     assert msg["industry_profile"]["cluster"] == "conglomerate"
+
+
+# ---------------------------------------------------------------------------
+# Task 12: conglomerate regression assertions
+# ---------------------------------------------------------------------------
+
+
+def test_conglomerate_signal_matches_legacy_logic():
+    """conglomerate cluster output matches pre-refactor fundamentals.py logic.
+
+    Before refactor: 5 dimensions X 3 metrics each, majority vote,
+    bullish > bearish -> bullish.
+    After refactor: conglomerate config + weighted vote (weights all 0.20,
+    equivalent to majority voting).
+    """
+    # All metrics pass -> bullish, confidence = 100%
+    metrics = {
+        "return_on_equity": 0.18, "net_margin": 0.25, "operating_margin": 0.20,
+        "revenue_growth": 0.15, "earnings_growth": 0.12, "book_value_growth": 0.11,
+        "current_ratio": 2.0, "debt_to_equity": 0.3, "free_cash_flow_per_share": 1.0,
+        "earnings_per_share": 0.8, "pe_ratio": 20, "price_to_book": 2, "price_to_sales": 3,
+        "dividend_yield": 0.05, "payout_ratio": 0.4,
+    }
+    result = fundamentals_agent(_make_state("conglomerate", metrics))
+    msg = json.loads(result["messages"][0].content)
+    assert msg["signal"] == "bullish"
+    # 5 dimensions all bullish, overall = 1.0, confidence = 100%
+    assert msg["confidence"] == "100%"
+
+
+def test_conglomerate_all_fail_returns_bearish():
+    """All metrics fail -> bearish signal."""
+    metrics = {
+        "return_on_equity": 0.01, "net_margin": 0.01, "operating_margin": 0.01,
+        "revenue_growth": -0.1, "earnings_growth": -0.1, "book_value_growth": -0.1,
+        "current_ratio": 0.5, "debt_to_equity": 0.9, "free_cash_flow_per_share": 0.1,
+        "earnings_per_share": 0.1, "pe_ratio": 100, "price_to_book": 10, "price_to_sales": 20,
+        "dividend_yield": 0.001, "payout_ratio": 0,
+    }
+    result = fundamentals_agent(_make_state("conglomerate", metrics))
+    msg = json.loads(result["messages"][0].content)
+    assert msg["signal"] == "bearish"
