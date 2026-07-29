@@ -163,3 +163,52 @@ def test_conglomerate_all_fail_returns_bearish():
     result = fundamentals_agent(_make_state("conglomerate", metrics))
     msg = json.loads(result["messages"][0].content)
     assert msg["signal"] == "bearish"
+
+
+def test_market_context_includes_price_cap_report_dividend():
+    """market_context 暴露展示用字段：股价/市值/财报期/分红方案。"""
+    metrics = {
+        "return_on_equity": 0.20, "net_margin": 0.25, "operating_margin": 0.18,
+        "revenue_growth": 0.15, "earnings_growth": 0.12, "book_value_growth": 0.10,
+        "current_ratio": 2.0, "debt_to_equity": 0.3, "free_cash_flow_per_share": 5.0,
+        "earnings_per_share": 6.0, "pe_ratio": 20.0, "price_to_book": 2.5,
+        "price_to_sales": 3.0, "dividend_yield": 0.04, "payout_ratio": 0.4,
+        "current_price": 6.24,
+        "report_date": "2025-03-31",
+        "latest_dividend": {
+            "公告日期": "2026-06-03", "派息": 0.908, "送股": 0, "转增": 0,
+            "进度": "实施", "除权除息日": "2026-06-10",
+        },
+    }
+    state = _make_state("utility_transport", metrics, industry="通信运营")
+    state["data"]["market_cap"] = 5.7e11
+    result = fundamentals_agent(state)
+    msg = json.loads(result["messages"][0].content)
+
+    mc = msg["market_context"]
+    assert mc["current_price"] == 6.24
+    assert mc["market_cap"] == 5.7e11
+    assert mc["report_date"] == "2025-03-31"
+    assert mc["latest_dividend"]["每10股派息"] == 0.908
+    assert mc["latest_dividend"]["进度"] == "实施"
+    assert mc["latest_dividend"]["除权除息日"] == "2026-06-10"
+
+
+def test_market_context_handles_missing_dividend():
+    """无分红记录时 latest_dividend 为 None，其余字段仍可用。"""
+    metrics = {
+        "return_on_equity": 0.20, "net_margin": 0.25, "operating_margin": 0.18,
+        "revenue_growth": 0.15, "earnings_growth": 0.12, "book_value_growth": 0.10,
+        "current_ratio": 2.0, "debt_to_equity": 0.3, "free_cash_flow_per_share": 5.0,
+        "earnings_per_share": 6.0, "pe_ratio": 20.0, "price_to_book": 2.5,
+        "price_to_sales": 3.0,
+        "current_price": 10.0,
+        "report_date": "",
+        "latest_dividend": None,
+    }
+    result = fundamentals_agent(_make_state("conglomerate", metrics))
+    msg = json.loads(result["messages"][0].content)
+    mc = msg["market_context"]
+    assert mc["current_price"] == 10.0
+    assert mc["latest_dividend"] is None
+    assert mc["report_date"] == ""

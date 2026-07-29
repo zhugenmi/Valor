@@ -22,6 +22,7 @@ from valor.adapters.data.akshare_cache import (
     get_financial_indicators,
     get_financial_report,
     get_history_pb,
+    get_latest_dividend_detail,
     get_price_history_df,
     get_r_and_d_expense,
     get_valuation_indicator,
@@ -310,6 +311,18 @@ def get_financial_metrics(
             logger.warning("derived metrics computation failed: {err}", err=exc)
 
         agent_metrics.update(cluster_extras)
+
+        # 展示用字段（不参与评分，供前端/下游 agent 展示）
+        agent_metrics["current_price"] = current_price
+        try:
+            report_dt = latest_financial.get("日期") if not latest_financial.empty else None
+            if report_dt is not None and not pd.isna(report_dt):
+                agent_metrics["report_date"] = pd.Timestamp(report_dt).strftime("%Y-%m-%d")
+            else:
+                agent_metrics["report_date"] = ""
+        except Exception:
+            agent_metrics["report_date"] = ""
+        agent_metrics["latest_dividend"] = get_latest_dividend_detail(symbol)
 
         logger.info("✓ Indicators built for {s}", s=symbol)
         return [agent_metrics]

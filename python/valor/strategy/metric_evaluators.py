@@ -7,6 +7,34 @@ from __future__ import annotations
 from valor.strategy.industry_clusters import DimensionSpec, MetricJudge, MetricSpec
 
 
+_DIRECTION_LABELS = {
+    MetricJudge.THRESHOLD_GT: "越大越好",
+    MetricJudge.THRESHOLD_LT: "越小越好",
+    MetricJudge.TREND_UP: "环比上升",
+    MetricJudge.TREND_DOWN: "环比下降",
+    MetricJudge.RANGE: "落在区间内",
+}
+
+
+def _metric_row(spec: MetricSpec, value, *, skipped: bool, passed: bool) -> dict:
+    """Assemble a per-metric result row with reference values for display."""
+    return {
+        "label": spec.label,
+        "field": spec.field,
+        "value": None if skipped else value,
+        "passed": passed,
+        "skipped": skipped,
+        "reference_only": spec.reference_only,
+        "missing_signal": spec.missing_signal,
+        "judge": spec.judge.value,
+        "direction": _DIRECTION_LABELS.get(spec.judge, ""),
+        "threshold": spec.threshold,
+        "threshold_low": spec.threshold_low,
+        "threshold_high": spec.threshold_high,
+        "description": spec.description,
+    }
+
+
 def evaluate_metric(spec: MetricSpec, value: float, metrics: dict) -> bool:
     """Judge a single metric value against its spec.
 
@@ -23,21 +51,21 @@ def evaluate_metric(spec: MetricSpec, value: float, metrics: dict) -> bool:
             threshold = baseline * (spec.baseline_multiplier or 1.0)
 
     if spec.judge == MetricJudge.THRESHOLD_GT:
-        return value > (threshold or 0)
+        return bool(value > (threshold or 0))
     if spec.judge == MetricJudge.THRESHOLD_LT:
-        return value < (threshold or 0)
+        return bool(value < (threshold or 0))
     if spec.judge == MetricJudge.RANGE:
-        return (spec.threshold_low or 0) < value < (spec.threshold_high or 0)
+        return bool((spec.threshold_low or 0) < value < (spec.threshold_high or 0))
     if spec.judge == MetricJudge.TREND_UP:
         prev = metrics.get(f"{spec.field}_prev")
         if prev is None:
             return False
-        return value > prev
+        return bool(value > prev)
     if spec.judge == MetricJudge.TREND_DOWN:
         prev = metrics.get(f"{spec.field}_prev")
         if prev is None:
             return False
-        return value < prev
+        return bool(value < prev)
     return False
 
 
@@ -56,22 +84,12 @@ def evaluate_dimension(dim: DimensionSpec, metrics: dict) -> tuple[str, str, lis
     for spec in dim.metrics:
         value = metrics.get(spec.field)
         if value is None or value == 0:
-            results.append({
-                "label": spec.label,
-                "value": None,
-                "passed": False,
-                "skipped": True,
-                "reference_only": spec.reference_only,
-                "missing_signal": spec.missing_signal,
-            })
+            results.append(_metric_row(spec, None, skipped=True, passed=False))
             continue
+        if hasattr(value, "item"):
+            value = value.item()
         passed = evaluate_metric(spec, value, metrics)
-        results.append({
-            "label": spec.label,
-            "value": value,
-            "passed": passed,
-            "reference_only": spec.reference_only,
-        })
+        results.append(_metric_row(spec, value, skipped=False, passed=passed))
 
     voting = [r for r in results if not r.get("reference_only") and not r.get("skipped")]
     if not voting:

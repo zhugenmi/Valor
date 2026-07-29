@@ -422,7 +422,7 @@ def test_result_dict_has_expected_keys():
     assert r["value"] == 0.6
     assert r["passed"] is True
     assert r["reference_only"] is False
-    assert "skipped" not in r
+    assert r["skipped"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -487,3 +487,58 @@ def test_conglomerate_financial_health_dimension_evaluation():
     }
     signal3, _, _ = evaluate_dimension(dim, metrics3)
     assert signal3 == "neutral"  # 1/3 -> neutral
+
+
+# ---------------------------------------------------------------------------
+# Regression: numpy scalar types must be JSON-serializable
+# (akshare returns np.float64/np.int64 from DataFrames)
+# ---------------------------------------------------------------------------
+
+def test_evaluate_metric_returns_python_bool_with_numpy_value():
+    """np.float64 comparison must not leak np.bool_ into output.
+
+    Regression for frontend crash: json.dumps failed with
+    'Object of type bool is not JSON serializable' because evaluate_metric
+    returned np.bool_ when value came from an akshare DataFrame.
+    """
+    import numpy as np
+
+    result = evaluate_metric(_gt_spec(threshold=0.5), np.float64(0.6), {})
+    assert result is True
+    assert type(result) is bool  # noqa: E721
+
+    result_lt = evaluate_metric(_lt_spec(threshold=0.5), np.float64(0.4), {})
+    assert result_lt is True
+    assert type(result_lt) is bool  # noqa: E721
+
+
+def test_evaluate_dimension_results_json_serializable_with_numpy():
+    """evaluate_dimension output must survive json.dumps when metrics
+    contain numpy scalars (the real-world akshare path)."""
+    import json
+
+    import numpy as np
+
+    dim = DimensionSpec(
+        name="profitability",
+        label="盈利能力",
+        weight=0.2,
+        rule="majority",
+        metrics=[
+            MetricSpec(field="roe", label="ROE",
+                       judge=MetricJudge.THRESHOLD_GT, threshold=0.1),
+            MetricSpec(field="margin", label="净利率",
+                       judge=MetricJudge.THRESHOLD_GT, threshold=0.05),
+        ],
+    )
+    metrics = {
+        "roe": np.float64(0.18),
+        "margin": np.float64(0.25),
+    }
+    _, _, results = evaluate_dimension(dim, metrics)
+
+    # Every 'passed' must be a Python bool, every 'value' must be JSON-native
+    for r in results:
+        assert type(r["passed"]) is bool, f"passed is {type(r['passed'])}"
+    # Must not raise
+    json.dumps({"results": results})

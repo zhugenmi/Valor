@@ -9,8 +9,8 @@ from valor.tools.market_snapshot import get_market_snapshot
 from valor.tools.summary import build_financial_summary, build_prices_summary
 from valor.utils.logging_config import setup_logger
 from valor.utils.api_utils import agent_endpoint
-from valor.adapters.data.akshare_cache import get_latest_trading_day, get_stock_industry
-from valor.strategy.cluster_resolver import resolve
+from valor.adapters.data.akshare_cache import get_latest_trading_day
+from valor.strategy.cluster_resolver import resolve_stock
 
 from datetime import datetime, timedelta
 import pandas as pd
@@ -57,11 +57,10 @@ def market_data_agent(state: AgentState):
 
     # 获取行业分类 + 集群映射
     try:
-        industry = get_stock_industry(ticker)
+        industry, cluster = resolve_stock(ticker)
     except Exception as e:
         logger.error(f"获取行业分类失败: {str(e)}")
-        industry = None
-    cluster = resolve(industry)
+        industry, cluster = None, "conglomerate"
     logger.info(f"行业: {industry} -> 集群: {cluster}")
 
     # 获取价格数据并验证

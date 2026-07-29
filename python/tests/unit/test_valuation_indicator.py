@@ -40,12 +40,13 @@ def _make_dividend_df() -> pd.DataFrame:
 
 
 def test_get_dividend_yield_sums_recent_12_months_dividends() -> None:
-    """近12个月除权除息日的派息应被累加,÷10 得每股分红,÷股价得股息率。
+    """以最近除权除息日为锚,过去 365 天内的派息应被累加,÷10 得每股分红,÷股价得股息率。
 
-    五粮液 000858 近12个月(以 2026-07-21 为基准):
-      2026-07-16: 25.7969
-      2025-12-18: 25.7800
-    合计 51.5769 元/10股 = 5.1577 元/股
+    五粮液 000858(以 2026-07-16 为最近除权除息日,365 天窗口 [2025-07-16, 2026-07-16]):
+      2026-07-16: 25.7969  (本财年年度分红,7 月)
+      2025-12-18: 25.7800  (本财年中期分红,12 月)
+      2025-07-18: 31.6900  (上财年年度分红,7 月,同月份应被排除)
+    合计 51.5769 元/10股 = 5.15769 元/股
     股价 74.3 元,股息率 ≈ 6.94%
     """
     fake_df = _make_dividend_df()
@@ -63,7 +64,7 @@ def test_get_dividend_yield_sums_recent_12_months_dividends() -> None:
     expected = (25.7969 + 25.7800) / 10 / 74.3
     assert abs(yield_val - expected) < 1e-6
     # 约 6.94%
-    assert 0.068 < yield_val < 0.070
+    assert 0.068 < yield_val < 0.071
 
 
 def test_get_dividend_yield_returns_zero_when_price_le_zero() -> None:
@@ -83,20 +84,24 @@ def test_get_dividend_yield_returns_zero_on_endpoint_failure() -> None:
         assert get_dividend_yield("000858", current_price=74.3) == 0.0
 
 
-def test_get_dividend_yield_returns_zero_when_no_recent_dividends() -> None:
-    """无近12个月分红记录应返回 0.0(如新股或从不分红股票)."""
-    old_df = pd.DataFrame({
-        "公告日期": ["2020-01-01"],
+def test_get_dividend_yield_returns_zero_when_no_valid_announce_date() -> None:
+    """所有分红记录的公告日期为 NaT 时返回 0.0.
+
+    预案(除权除息日 NaT 但公告日期有效)现在会被算入股息率,
+    所以"全 NaT 除权除息日"不再意味着返回 0.0; 改为校验公告日期无效。
+    """
+    all_nat_df = pd.DataFrame({
+        "公告日期": [pd.NaT],
         "送股": [0],
         "转增": [0],
         "派息": [10.0],
-        "进度": ["实施"],
-        "除权除息日": ["2020-01-15"],
-        "股权登记日": ["2020-01-14"],
+        "进度": ["预案"],
+        "除权除息日": [pd.NaT],
+        "股权登记日": [pd.NaT],
         "红股上市日": [pd.NaT],
     })
 
-    with patch.object(ak, "stock_history_dividend_detail", return_value=old_df), \
+    with patch.object(ak, "stock_history_dividend_detail", return_value=all_nat_df), \
          patch(
              "valor.adapters.data.akshare_cache.cache.fetch_records",
              return_value=[],

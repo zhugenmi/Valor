@@ -12,7 +12,7 @@ from valor.strategy.industry_clusters import (
     MetricJudge,
     MetricSpec,
 )
-from valor.strategy.cluster_resolver import resolve
+from valor.strategy.cluster_resolver import resolve, resolve_stock
 from valor.strategy.metric_evaluators import evaluate_dimension, evaluate_metric
 
 __all__ = [
@@ -24,6 +24,7 @@ __all__ = [
     "MetricJudge",
     "FallbackSource",
     "resolve",
+    "resolve_stock",
     "evaluate_dimension",
     "evaluate_metric",
 ]

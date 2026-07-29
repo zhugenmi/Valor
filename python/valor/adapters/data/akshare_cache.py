@@ -295,10 +295,22 @@ def get_dividend_yield(
     current_price: float,
     ttl_seconds: int = 30 * 24 * 3600,
 ) -> float:
-    """计算近12个月股息率(基于除权除息日)。
+    """计算最近一个财年的股息率。
 
-    股息率 = 近12个月每股分红 / 当前股价
-    每股分红 = sum(近12个月"派息") / 10  (新浪"派息"字段是每10股金额)
+    股息率 = 本财年每股分红 / 当前股价
+    每股分红 = sum(本财年"派息") / 10  (新浪"派息"字段是每10股金额)
+
+    本财年口径：取最新 1 条分红记录作为"年报分红"；如果第 2 条与最新 1 条
+    间隔 < 365 天且月份不同，取为"半年报分红"。合计这 1-2 条记录的派息。
+
+    - 间隔 < 365 天：排除上一年年报分红（相邻年报间隔约 12 个月）
+    - 月份不同：1 次/年的公司相邻分红间隔约 12 个月且月份相同，不取；
+      2 次/年的公司半年报与年报公告月份不同，取
+
+    预案(尚未实施, 除权除息日 NaT)也算入, 反映公司已公告的分红意图——例如
+    海尔智家 2025 年报预案(10派8.867)在 2026-04 公告后, 应与 2025 半年报实施
+    (10派2.692)合计, 而非漏掉预案只取 2024 年报实施。
+
     current_price <= 0 或无分红记录返回 0.0。
     """
     if current_price <= 0:
@@ -333,19 +345,87 @@ def get_dividend_yield(
         _log_cache_upsert(DIVIDEND_TABLE, symbol, len(raw))
         df = raw
 
-    if df.empty or "除权除息日" not in df.columns:
+    if df.empty or "公告日期" not in df.columns:
         return 0.0
 
     work = df.copy()
-    work["除权除息日"] = pd.to_datetime(work["除权除息日"], errors="coerce")
-    cutoff = pd.Timestamp.now() - pd.Timedelta(days=365)
-    recent = work[work["除权除息日"] >= cutoff]
-    if recent.empty:
+    work["公告日期"] = pd.to_datetime(work["公告日期"], errors="coerce")
+    work = work.dropna(subset=["公告日期"])
+    if work.empty:
         return 0.0
 
-    total_cash = pd.to_numeric(recent["派息"], errors="coerce").fillna(0).sum()
+    work = work.sort_values("公告日期", ascending=False).reset_index(drop=True)
+
+    # 取最新 1 条作为"年报分红"
+    latest = work.iloc[0]
+    latest_date = latest["公告日期"]
+    selected_idx = [0]
+
+    # 看第 2 条：若间隔 < 365 天且月份不同，取为"半年报分红"
+    # - 间隔 < 365 天：排除上一年年报分红（相邻年报间隔约 12 个月）
+    # - 月份不同：1 次/年的公司相邻分红间隔约 12 个月且月份相同，不取；
+    #   2 次/年的公司半年报与年报公告月份不同，取
+    if len(work) >= 2:
+        second = work.iloc[1]
+        second_date = second["公告日期"]
+        gap_days = (latest_date - second_date).days
+        if gap_days < 365 and second_date.month != latest_date.month:
+            selected_idx.append(1)
+
+    selected = work.loc[selected_idx]
+    total_cash = pd.to_numeric(selected["派息"], errors="coerce").fillna(0).sum()
     per_share = total_cash / 10.0
     return per_share / current_price if current_price > 0 else 0.0
+
+
+def get_latest_dividend_detail(symbol: str) -> dict | None:
+    """返回最近一次已实施分红记录详情。
+
+    复用 get_dividend_yield 的 DIVIDEND_TABLE 缓存；缓存 miss 时拉取并回填。
+    返回 dict 含: 公告日期, 送股, 转增, 派息(每10股), 进度, 除权除息日, 股权登记日。
+    无记录返回 None。除权除息日为 NaT 的预案/未实施记录会被排除。
+    """
+    cached = cache.fetch_records(
+        table=DIVIDEND_TABLE,
+        filters={COL_CODE: symbol},
+        ttl_seconds=30 * 24 * 3600,
+        order_by='"除权除息日" DESC',
+    )
+    if cached:
+        df = _records_to_df(cached)
+        if "除权除息日" in df.columns:
+            df["除权除息日"] = pd.to_datetime(df["除权除息日"], errors="coerce")
+            df = df.dropna(subset=["除权除息日"])
+        if not df.empty:
+            df = df.sort_values("除权除息日", ascending=False)
+            return df.iloc[0].to_dict()
+        return None
+
+    try:
+        raw = _call_with_retry(
+            lambda: ak.stock_history_dividend_detail(symbol=symbol, indicator="分红"),
+            "stock_history_dividend_detail",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"stock_history_dividend_detail error: {exc}")
+        return None
+    if raw is None or raw.empty:
+        return None
+    raw = raw.copy()
+    raw[COL_CODE] = symbol
+    cache.upsert_records(
+        DIVIDEND_TABLE,
+        raw.to_dict("records"),
+        key_columns=[COL_CODE, "公告日期"],
+    )
+    _log_cache_upsert(DIVIDEND_TABLE, symbol, len(raw))
+
+    if "除权除息日" in raw.columns:
+        raw["除权除息日"] = pd.to_datetime(raw["除权除息日"], errors="coerce")
+        raw = raw.dropna(subset=["除权除息日"]).sort_values("除权除息日", ascending=False)
+    if raw.empty:
+        return None
+    return raw.iloc[0].to_dict()
 
 
 def _indicators_has_new_period(cached_records: list[dict]) -> bool:

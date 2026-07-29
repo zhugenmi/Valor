@@ -51,7 +51,8 @@ def test_get_stock_spot_row_uses_bid_ask_endpoint(temp_cache: AkshareSQLiteCache
         raise AssertionError("stock_zh_a_spot_em must not be called")
 
     with patch.object(ak, "stock_bid_ask_em", fake_bid_ask), \
-         patch.object(ak, "stock_zh_a_spot_em", fail_spot_em):
+         patch.object(ak, "stock_zh_a_spot_em", fail_spot_em), \
+         patch("valor.adapters.data.akshare_cache.is_market_open", return_value=True):
         result = akshare_cache.get_stock_spot_row("000725")
 
     assert result is not None
@@ -62,7 +63,8 @@ def test_get_stock_spot_row_uses_bid_ask_endpoint(temp_cache: AkshareSQLiteCache
 def test_get_stock_spot_row_returns_expected_fields(temp_cache: AkshareSQLiteCache) -> None:
     """Returned Series carries ticker code and key realtime fields."""
     with patch.object(ak, "stock_bid_ask_em", return_value=_fake_bid_ask_df()), \
-         patch.object(ak, "stock_zh_a_spot_em", side_effect=AssertionError):
+         patch.object(ak, "stock_zh_a_spot_em", side_effect=AssertionError), \
+         patch("valor.adapters.data.akshare_cache.is_market_open", return_value=True):
         result = akshare_cache.get_stock_spot_row("000725")
 
     assert result is not None
@@ -83,7 +85,8 @@ def test_get_stock_spot_row_caches_result(temp_cache: AkshareSQLiteCache) -> Non
         return _fake_bid_ask_df()
 
     with patch.object(ak, "stock_bid_ask_em", counting_bid_ask), \
-         patch.object(ak, "stock_zh_a_spot_em", side_effect=AssertionError):
+         patch.object(ak, "stock_zh_a_spot_em", side_effect=AssertionError), \
+         patch("valor.adapters.data.akshare_cache.is_market_open", return_value=True):
         first = akshare_cache.get_stock_spot_row("000725")
         second = akshare_cache.get_stock_spot_row("000725")
 
