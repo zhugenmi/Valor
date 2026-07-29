@@ -481,7 +481,7 @@ def _conglomerate_cluster() -> IndustryCluster:
                 name="shareholder_return", label="股东回报", weight=0.20,
                 metrics=[
                     MetricSpec(field="dividend_yield", label="股息率",
-                               judge=MetricJudge.THRESHOLD_GT, threshold=0.04),
+                               judge=MetricJudge.THRESHOLD_GT, threshold=0.0399),
                 ],
             ),
         ],

@@ -416,7 +416,7 @@ def _compute_derived_metrics(latest: dict, prev: dict | None) -> dict:
     inventory_turnover, asset_turnover, asset_turnover_prev,
     capex_to_depreciation, receivable_to_revenue, sales_expense_ratio,
     ocf_to_net_profit, free_cash_flow, capex_to_ocf, gross_margin,
-    gross_margin_prev.
+    gross_margin_prev, contract_liability, contract_liability_prev.
     """
     if not latest:
         return {}
@@ -483,6 +483,11 @@ def _compute_derived_metrics(latest: dict, prev: dict | None) -> dict:
         prev_cost = _to_float(prev.get("operating_cost", 0))
         if prev_revenue_gm > 0:
             result["gross_margin_prev"] = _safe_div(prev_revenue_gm - prev_cost, prev_revenue_gm)
+
+    # contract_liability (合同负债) for consumer_staples growth dimension
+    result["contract_liability"] = _to_float(latest.get("advance_from_customers", 0))
+    if prev:
+        result["contract_liability_prev"] = _to_float(prev.get("advance_from_customers", 0))
 
     return result
 

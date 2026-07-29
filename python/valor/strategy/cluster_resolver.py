@@ -1,6 +1,6 @@
 """Resolve industry name to cluster key.
 
-License: Apache-2.0 OR GPL-3.0-or-later WITH GPL-3.0-NonCommercial
+License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial
 """
 from valor.strategy.industry_clusters import INDUSTRY_TO_CLUSTER
 

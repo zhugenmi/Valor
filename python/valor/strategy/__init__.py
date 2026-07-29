@@ -1,4 +1,7 @@
-"""Industry-customized fundamental analysis strategy module."""
+"""Industry-customized fundamental analysis strategy module.
+
+License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial
+"""
 
 from valor.strategy.industry_clusters import (
     INDUSTRY_CLUSTERS,
