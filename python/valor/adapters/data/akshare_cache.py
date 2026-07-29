@@ -1,4 +1,7 @@
-"""Cached market data helpers backed by SQLite."""
+"""Cached market data helpers backed by SQLite.
+
+License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial
+"""
 
 from __future__ import annotations
 
@@ -1243,3 +1246,149 @@ def _compute_pb_percentile(pb_series: list[tuple[str, float]], current_pb: float
     values_sorted = sorted(values)
     rank = sum(1 for v in values_sorted if v < current_pb)
     return rank / (len(values_sorted) - 1)
+
+
+# ---------------------------------------------------------------------------
+# Bank special indicators (NIM / NPL / provision coverage / core tier1)
+# ---------------------------------------------------------------------------
+
+BANK_SPECIAL_TABLE = "bank_special_indicators"
+DIVIDEND_HISTORY_TABLE = "dividend_history"
+
+
+def _parse_bank_special_from_report(symbol: str) -> dict:
+    """从新浪银行专项报表解析 NIM/NPL/拨备/资本充足率.
+
+    AkShare 无直接银行专项接口, 从 stock_financial_report_sina 的资产负债表/
+    利润表附注字段解析。失败返回空 dict。
+    """
+    try:
+        income = get_financial_report(symbol, "利润表")
+        balance = get_financial_report(symbol, "资产负债表")
+        result = {}
+        if income is not None and not income.empty:
+            row = income.iloc[0]
+            nim = row.get("净息差") or row.get("净利差")
+            if nim is not None and float(nim) > 0:
+                result["net_interest_margin"] = float(nim) / 100 if float(nim) > 1 else float(nim)
+        if balance is not None and not balance.empty:
+            row = balance.iloc[0]
+            npl = row.get("不良贷款率") or row.get("不良贷款比例")
+            if npl is not None:
+                result["non_performing_loan_ratio"] = float(npl) / 100 if float(npl) > 1 else float(npl)
+            prov = row.get("拨备覆盖率") or row.get("贷款拨备率")
+            if prov is not None:
+                result["provision_coverage"] = float(prov) / 100 if float(prov) > 10 else float(prov)
+            tier1 = row.get("核心一级资本充足率")
+            if tier1 is not None:
+                result["core_tier1_capital_ratio"] = float(tier1) / 100 if float(tier1) > 1 else float(tier1)
+        return result
+    except Exception as exc:
+        logger.warning("_parse_bank_special_from_report failed for %s: %s", symbol, exc)
+        return {}
+
+
+def _online_search_metrics(symbol: str, fields: list[str]) -> dict:
+    """通过在线搜索补全缺失指标. TODO: Task 6 接入 mx-search skill."""
+    return {}
+
+
+def _llm_estimate_metrics(symbol: str, fields: list[str], hint: str = "") -> dict:
+    """通过 LLM 估算缺失指标. TODO: Task 6 接入 get_market_snapshot 扩展."""
+    return {}
+
+
+def get_bank_special_indicators(symbol: str) -> dict:
+    """获取银行专项指标, 3 级 fallback: 解析报表 -> 在线搜索 -> LLM 生成 -> 空 dict."""
+    result = {}
+    # Level 1
+    try:
+        parsed = _parse_bank_special_from_report(symbol)
+        if parsed:
+            result.update(parsed)
+    except Exception as exc:
+        logger.warning("bank special L1 fail for %s: %s", symbol, exc)
+
+    bank_fields = [
+        "net_interest_margin",
+        "non_performing_loan_ratio",
+        "provision_coverage",
+        "core_tier1_capital_ratio",
+    ]
+    # Level 2: online search
+    missing = [f for f in bank_fields if f not in result or result.get(f) is None]
+    if missing:
+        try:
+            searched = _online_search_metrics(symbol, missing)
+            result.update(searched)
+        except Exception:
+            pass
+
+    # Level 3: LLM
+    still_missing = [f for f in missing if f not in result or result.get(f) is None]
+    if still_missing:
+        try:
+            llm_gen = _llm_estimate_metrics(
+                symbol,
+                still_missing,
+                hint="银行专项指标,参考行业均值:NIM~1.4%,NPL~1.5%,拨备>200%,核心一级>8.5%",
+            )
+            result.update(llm_gen)
+        except Exception:
+            pass
+
+    return result
+
+
+def get_dividend_history(symbol: str, years: int = 5) -> list[tuple[str, float]]:
+    """获取分红历史, fallback 返回空列表."""
+    try:
+        df = ak.stock_dividend_cninfo(symbol=symbol)
+    except Exception as exc:
+        logger.warning("get_dividend_history fail for %s: %s", symbol, exc)
+        return []
+    if df is None or df.empty:
+        return []
+    # 预期列含 年度/分红金额
+    year_col = next((c for c in df.columns if "年" in str(c) or "日期" in str(c)), None)
+    amt_col = next((c for c in df.columns if "分红" in str(c) or "金额" in str(c) or "派息" in str(c)), None)
+    if year_col is None or amt_col is None:
+        return []
+    records = []
+    for _, row in df.iterrows():
+        try:
+            year = str(row[year_col])[:4]
+            amt = float(row[amt_col])
+            if year and amt > 0:
+                records.append((year, amt))
+        except (ValueError, TypeError):
+            continue
+    return records[-years:]
+
+
+def _compute_dividend_years(history: list[tuple[str, float]]) -> int:
+    """计算连续分红年数."""
+    if not history:
+        return 0
+    return len(history)
+
+
+def get_r_and_d_expense(symbol: str) -> dict:
+    """获取研发投入数据, fallback 返回空 dict."""
+    try:
+        income = get_financial_report(symbol, "利润表")
+        if income is None or income.empty:
+            return {}
+        row = income.iloc[0]
+        result = {}
+        rd = row.get("研发费用") or row.get("研究开发费")
+        revenue = row.get("营业总收入")
+        if rd is not None and revenue and float(revenue) > 0:
+            result["r_and_d_to_revenue"] = float(rd) / float(revenue)
+        capitalized = row.get("研发资本化金额") or row.get("开发支出")
+        if capitalized is not None and rd is not None and float(rd) > 0:
+            result["r_and_d_capitalization_rate"] = float(capitalized) / float(rd)
+        return result
+    except Exception as exc:
+        logger.warning("get_r_and_d_expense fail for %s: %s", symbol, exc)
+        return {}
