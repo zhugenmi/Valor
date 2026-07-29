@@ -1,10 +1,16 @@
+"""Market data agent - gathers price history, financials, industry, and cluster info.
+
+License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial
+"""
+
 from valor.agents.state import AgentState, show_agent_reasoning, show_workflow_status
 from valor.tools.api import get_financial_metrics, get_financial_statements, get_market_data, get_price_history
 from valor.tools.market_snapshot import get_market_snapshot
 from valor.tools.summary import build_financial_summary, build_prices_summary
 from valor.utils.logging_config import setup_logger
 from valor.utils.api_utils import agent_endpoint
-from valor.adapters.data.akshare_cache import get_latest_trading_day
+from valor.adapters.data.akshare_cache import get_latest_trading_day, get_stock_industry
+from valor.strategy.cluster_resolver import resolve
 
 from datetime import datetime, timedelta
 import pandas as pd
@@ -49,6 +55,15 @@ def market_data_agent(state: AgentState):
     # Get all required data
     ticker = data["ticker"]
 
+    # 获取行业分类 + 集群映射
+    try:
+        industry = get_stock_industry(ticker)
+    except Exception as e:
+        logger.error(f"获取行业分类失败: {str(e)}")
+        industry = None
+    cluster = resolve(industry)
+    logger.info(f"行业: {industry} -> 集群: {cluster}")
+
     # 获取价格数据并验证
     prices_df = get_price_history(ticker, start_date, end_date)
     if prices_df is None or prices_df.empty:
@@ -75,6 +90,7 @@ def market_data_agent(state: AgentState):
             trace_state=state,
             as_of_date=end_date,
             snapshot=snapshot,
+            cluster_hint=cluster,
         )
     except Exception as e:
         logger.error(f"获取财务指标失败: {str(e)}")
@@ -152,6 +168,8 @@ def market_data_agent(state: AgentState):
             "financial_line_items": financial_line_items,
             "market_cap": market_data.get("market_cap", 0),
             "market_data": market_data,
+            "industry": industry,
+            "cluster": cluster,
         },
         "metadata": state["metadata"],
     }
