@@ -173,7 +173,7 @@ def get_financial_metrics(
         except Exception:
             latest_income = pd.Series(dtype=float)
 
-        total_revenue = _to_float(latest_income.get("营业总收入", 0))
+        total_revenue = _compute_ttm(income_statement, "营业总收入", 0)
         net_inc = _to_float(latest_income.get("净利润", 0))
         eps = _to_float(latest_financial.get("加权每股收益(元)", 0))
 
@@ -310,6 +310,30 @@ def get_financial_metrics(
         except Exception as exc:
             logger.warning("derived metrics computation failed: {err}", err=exc)
 
+        # Altman Z-score(基本面 Z 分数,区别于技术面 price z-score)
+        try:
+            working_capital_bs = _to_float(ext_balance.get("current_assets", 0)) - _to_float(
+                ext_balance.get("current_liabilities", 0)
+            )
+            total_assets_bs = _to_float(ext_balance.get("total_assets", 0))
+            retained_earnings_bs = _to_float(ext_balance.get("retained_earnings", 0))
+            total_liabilities_bs = _to_float(ext_balance.get("total_liabilities", 0))
+            ebit_ttm = _compute_ttm(income_statement, "营业利润", 0)
+            revenue_ttm = _compute_ttm(income_statement, "营业总收入", 0)
+            altman_z = _compute_altman_z(
+                working_capital=working_capital_bs,
+                total_assets=total_assets_bs,
+                retained_earnings=retained_earnings_bs,
+                ebit=ebit_ttm,
+                market_cap=total_market_cap,
+                total_liabilities=total_liabilities_bs,
+                revenue=revenue_ttm,
+            )
+            if altman_z > 0:
+                cluster_extras["altman_z"] = altman_z
+        except Exception as exc:
+            logger.warning("altman_z computation failed: {err}", err=exc)
+
         agent_metrics.update(cluster_extras)
 
         # 展示用字段（不参与评分，供前端/下游 agent 展示）
@@ -367,23 +391,6 @@ def get_financial_statements(
             return default
         return _to_float(df.iloc[idx].get(key, default), default)
 
-    def _safe_get_any(df: pd.DataFrame, idx: int, keys: list[str], default: float = 0.0) -> float:
-        """Try multiple candidate field names; return first non-zero match.
-
-        Different data sources (Sina vs THS) and different stocks use slightly
-        different field names (e.g., '支付的现金' vs '所支付的现金'). Try each
-        candidate in order and return the first non-zero value.
-        """
-        if df.empty or idx >= len(df):
-            return default
-        row = df.iloc[idx]
-        for k in keys:
-            if k in row:
-                val = _to_float(row.get(k), default)
-                if val != 0.0:
-                    return val
-        return default
-
     balance_sheet = _get_report(_REPORT_BALANCE_SHEET)
     income_statement = _get_report(_REPORT_INCOME_STATEMENT)
     cash_flow = _get_report(_REPORT_CASH_FLOW)
@@ -400,16 +407,18 @@ def get_financial_statements(
     ]
 
     def _build_item(idx: int) -> dict[str, float]:
+        # 流量项(利润表/现金流量表)用 TTM,避免季报 YTD 被当成年度值
+        # 存量项(资产负债表)保持 iloc[idx] 快照
         return {
-            "net_income": _safe_get(income_statement, idx, "净利润"),
-            "operating_revenue": _safe_get(income_statement, idx, "营业总收入"),
-            "operating_profit": _safe_get(income_statement, idx, "营业利润"),
+            "net_income": _compute_ttm(income_statement, "净利润", idx),
+            "operating_revenue": _compute_ttm(income_statement, "营业总收入", idx),
+            "operating_profit": _compute_ttm(income_statement, "营业利润", idx),
             "working_capital": _safe_get(balance_sheet, idx, "流动资产合计")
             - _safe_get(balance_sheet, idx, "流动负债合计"),
-            "depreciation_and_amortization": _safe_get_any(cash_flow, idx, _DEPRECIATION_FIELDS),
-            "capital_expenditure": abs(_safe_get_any(cash_flow, idx, _CAPEX_FIELDS)),
-            "free_cash_flow": _safe_get(cash_flow, idx, "经营活动产生的现金流量净额")
-            - abs(_safe_get_any(cash_flow, idx, _CAPEX_FIELDS)),
+            "depreciation_and_amortization": _compute_ttm_any(cash_flow, _DEPRECIATION_FIELDS, idx),
+            "capital_expenditure": abs(_compute_ttm_any(cash_flow, _CAPEX_FIELDS, idx)),
+            "free_cash_flow": _compute_ttm(cash_flow, "经营活动产生的现金流量净额", idx)
+            - abs(_compute_ttm_any(cash_flow, _CAPEX_FIELDS, idx)),
         }
 
     return [_build_item(0), _build_item(1)]
@@ -420,6 +429,112 @@ def _safe_div(numerator: float, denominator: float | None) -> float:
     if denominator is None or denominator == 0:
         return 0.0
     return numerator / denominator
+
+
+def _compute_ttm(report_df: pd.DataFrame, field: str, idx: int = 0) -> float:
+    """计算流量项的 TTM (trailing twelve months) 值。
+
+    A 股财报的 Q1/H1/Q3 都是 YTD 累计值(非单季),直接用 iloc[idx] 会把
+    季度累计值当成年度值,导致 PS/DCF/所有者收益严重失真。
+    TTM = 当期 YTD + (上一年年报 - 上一年同期 YTD)
+
+    Args:
+        report_df: 财报 DataFrame,需含 '报告日' 列。
+        field: 流量字段名(如 '营业总收入','净利润','经营活动产生的现金流量净额')。
+        idx: 当期索引(0=最新)。
+
+    Returns:
+        TTM 值。当期为年报(12月)时直接返回年报值;
+        找不到上年年报或上年同期时降级为当期 YTD 按月份比例年化;
+        数据完全缺失返回 0。
+    """
+    if report_df is None or report_df.empty or "报告日" not in report_df.columns:
+        return 0.0
+    if idx >= len(report_df):
+        return 0.0
+
+    df = report_df.copy()
+    df["报告日"] = pd.to_datetime(df["报告日"])
+    df = df.sort_values("报告日", ascending=False).reset_index(drop=True)
+
+    current_row = df.iloc[idx]
+    current_date = current_row["报告日"]
+    current_val = _to_float(current_row.get(field, 0))
+
+    # 年报直接返回(12月报告期)
+    if current_date.month == 12:
+        return max(current_val, 0)
+
+    prev_year = current_date.year - 1
+    # 按年-月匹配,避免 day 差异(报告日多为月末 30/31 日)
+    prev_same_period_val: float | None = None
+    prev_annual_val: float | None = None
+    for _, row in df.iterrows():
+        row_date = row["报告日"]
+        if row_date.year == prev_year and row_date.month == current_date.month:
+            prev_same_period_val = _to_float(row.get(field, 0))
+        if row_date.year == prev_year and row_date.month == 12:
+            prev_annual_val = _to_float(row.get(field, 0))
+        if prev_same_period_val is not None and prev_annual_val is not None:
+            break
+
+    if prev_same_period_val is not None and prev_annual_val is not None:
+        ttm = current_val + (prev_annual_val - prev_same_period_val)
+        return max(ttm, 0)
+
+    # 降级:YTD 按月份比例年化(Q1×4, H1×2, Q3×4/3)
+    months = current_date.month
+    if months > 0 and months < 12:
+        return max(current_val * 12.0 / months, 0)
+    return max(current_val, 0)
+
+
+def _compute_altman_z(
+    working_capital: float,
+    total_assets: float,
+    retained_earnings: float,
+    ebit: float,
+    market_cap: float,
+    total_liabilities: float,
+    revenue: float,
+) -> float:
+    """计算 Altman Z-score(原始制造业模型,1968)。
+
+    Z = 0.012*X1 + 0.014*X2 + 0.033*X3 + 0.006*X4 + 0.999*X5
+    X1 = 营运资金 / 总资产
+    X2 = 留存收益 / 总资产
+    X3 = EBIT / 总资产
+    X4 = 市值 / 总负债
+    X5 = 销售额 / 总资产
+
+    判读:Z > 2.99 安全;1.81 < Z < 2.99 灰色;Z < 1.81 高风险。
+    对低负债公司(如茅台)X4 会非常大但系数小,导致 Z 偏低,属已知局限。
+    """
+    if total_assets <= 0:
+        return 0.0
+    x1 = _safe_div(working_capital, total_assets)
+    x2 = _safe_div(retained_earnings, total_assets)
+    x3 = _safe_div(ebit, total_assets)
+    x4 = _safe_div(market_cap, total_liabilities) if total_liabilities > 0 else 0.0
+    x5 = _safe_div(revenue, total_assets)
+    z = 0.012 * x1 + 0.014 * x2 + 0.033 * x3 + 0.006 * x4 + 0.999 * x5
+    return max(z, 0.0)
+
+
+def _compute_ttm_any(report_df: pd.DataFrame, fields: list[str], idx: int = 0) -> float:
+    """Try multiple candidate field names for TTM; return first non-zero match.
+
+    Different data sources (Sina vs THS) use slightly different field names
+    (e.g. '...支付的现金' vs '...所支付的现金'). Try each in order.
+    """
+    if report_df is None or report_df.empty:
+        return 0.0
+    for f in fields:
+        if f in report_df.columns:
+            val = _compute_ttm(report_df, f, idx)
+            if val != 0:
+                return val
+    return 0.0
 
 
 def _compute_derived_metrics(latest: dict, prev: dict | None) -> dict:
@@ -521,6 +636,9 @@ def _extract_extended_balance_sheet_fields(balance_df, idx: int = 0) -> dict:
         "long_term_loan": ["长期借款"],
         "bonds_payable": ["应付债券"],
         "monetary_capital": ["货币资金"],
+        "current_assets": ["流动资产合计"],
+        "current_liabilities": ["流动负债合计"],
+        "retained_earnings": ["未分配利润"],
     }
     result = {}
     for key, candidates in _candidates.items():
@@ -541,6 +659,7 @@ def _extract_extended_income_fields(income_df, idx: int = 0) -> dict:
         "sales_expense": ["销售费用"],
         "operating_revenue": ["营业总收入", "营业收入"],
         "net_income": ["净利润"],
+        "operating_profit": ["营业利润"],
     }
     result = {}
     for key, candidates in _candidates.items():
