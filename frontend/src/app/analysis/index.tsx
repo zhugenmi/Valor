@@ -80,13 +80,18 @@ export default function AnalysisPage() {
               ...current,
               status: allDone ? "completed" : "running",
               subStates,
+              citations: data.citations,
             },
           };
         });
       } else {
         setAgents((prev) => ({
           ...prev,
-          [data.agent]: { status: "completed", output: data.state },
+          [data.agent]: {
+            status: "completed",
+            output: data.state,
+            citations: data.citations,
+          },
         }));
       }
     },

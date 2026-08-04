@@ -7,12 +7,14 @@ import {
   XCircle,
 } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router";
 import MarkdownRenderer from "@/components/valuecell/renderer/markdown-renderer";
 import AgentResultDisplay from "../AgentResultDisplay";
 import { extractAnalysisResult } from "../analysisExtractor";
 import {
   AGENT_LABEL_ZH,
   type AgentState,
+  type Citation,
   SUB_AGENT_KEYS,
   SUB_AGENT_LABEL_ZH,
 } from "./constants";
@@ -110,6 +112,27 @@ function SubStateRow({ subKey, data }: { subKey: string; data: unknown }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function CitationsBlock({ citations }: { citations: Citation[] }) {
+  if (!citations || citations.length === 0) return null;
+  return (
+    <div className="mt-3 border-border border-t pt-2">
+      <div className="text-muted-foreground mb-1 text-xs">数据来源（{citations.length}）</div>
+      <div className="space-y-1">
+        {citations.map((c, i) => (
+          <Link
+            key={`${c.doc_id}-${c.chunk_id}-${i}`}
+            to={`/knowledge/${c.doc_id}?chunk=${c.chunk_id}&page=${c.page_no ?? 1}`}
+            className="block text-xs text-primary hover:underline"
+          >
+            [{i + 1}]《{c.doc_title}》({c.publish_date}, {c.vintage})
+            {c.page_no ? ` p.${c.page_no}` : ""}
+          </Link>
+        ))}
+      </div>
     </div>
   );
 }
@@ -238,6 +261,7 @@ export default function AgentCard({ name, state, isActive }: AgentCardProps) {
           ) : (
             <p className="text-muted-foreground text-sm">等待分析...</p>
           )}
+          <CitationsBlock citations={state?.citations ?? []} />
         </div>
       )}
     </div>

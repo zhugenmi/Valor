@@ -56,11 +56,23 @@ export const SUB_AGENT_LABEL_ZH: Record<string, string> = {
 
 export type AgentStatus = "pending" | "running" | "completed" | "failed";
 
+export interface Citation {
+  chunk_id: string;
+  doc_id: string;
+  doc_title: string;
+  publish_date: string;
+  vintage: string;
+  page_no: number | null;
+  cited_text: string;
+  score?: number;
+}
+
 export interface AgentState {
   status: AgentStatus;
   output: unknown;
   error?: string;
   subStates?: Record<string, unknown>;
+  citations?: Citation[];
 }
 
 export interface Decision {
@@ -84,6 +96,7 @@ export interface AgentCompletedEvent {
   thread_id: string;
   agent: string;
   state: Record<string, unknown>;
+  citations?: Citation[];
 }
 
 export interface WorkflowCompletedEvent {
