@@ -4,7 +4,8 @@ from __future__ import annotations
 from typing import Any
 
 from valor.knowledge_base.models import Chunk, KBDoc
-from valor.server.db import KB_AVAILABLE, get_conn
+from valor.server.db import get_conn
+from valor.server import db as _db
 
 
 def insert_document(doc: KBDoc) -> None:
@@ -85,6 +86,27 @@ def update_document_status(
         )
 
 
+def delete_document_chunks(doc_id: str) -> None:
+    """Delete all chunks (and vec/fts entries) for a doc, keep the doc row."""
+    with get_conn() as conn:
+        chunk_ids = [
+            r["chunk_id"]
+            for r in conn.execute(
+                "SELECT chunk_id FROM kb_chunks WHERE doc_id = ?", (doc_id,)
+            ).fetchall()
+        ]
+        if chunk_ids:
+            placeholders = ",".join("?" * len(chunk_ids))
+            conn.execute("DELETE FROM kb_chunks WHERE doc_id = ?", (doc_id,))
+            if _db.KB_AVAILABLE:
+                conn.execute(
+                    f"DELETE FROM kb_chunks_vec WHERE chunk_id IN ({placeholders})", chunk_ids
+                )
+            conn.execute(
+                f"DELETE FROM kb_chunks_fts WHERE chunk_id IN ({placeholders})", chunk_ids
+            )
+
+
 def delete_document(doc_id: str) -> None:
     with get_conn() as conn:
         # kb_chunks ON DELETE CASCADE; vec/fts 手动删
@@ -97,7 +119,7 @@ def delete_document(doc_id: str) -> None:
         if chunk_ids:
             placeholders = ",".join("?" * len(chunk_ids))
             conn.execute("DELETE FROM kb_chunks WHERE doc_id = ?", (doc_id,))
-            if KB_AVAILABLE:
+            if _db.KB_AVAILABLE:
                 conn.execute(
                     f"DELETE FROM kb_chunks_vec WHERE chunk_id IN ({placeholders})",
                     chunk_ids,
@@ -134,7 +156,7 @@ def get_chunks_by_doc(doc_id: str) -> list[Chunk]:
 def insert_vectors(chunk_ids: list[str], embeddings: list[list[float]]) -> None:
     if not chunk_ids:
         return
-    if not KB_AVAILABLE:
+    if not _db.KB_AVAILABLE:
         return
     rows = [(cid, str(vec)) for cid, vec in zip(chunk_ids, embeddings)]
     with get_conn() as conn:

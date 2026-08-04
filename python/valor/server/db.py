@@ -129,6 +129,15 @@ def get_conn():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
+    if KB_AVAILABLE:
+        try:
+            conn.enable_load_extension(True)
+            import sqlite_vec
+
+            conn.load_extension(sqlite_vec.loadable_path())
+            conn.enable_load_extension(False)
+        except Exception:
+            pass
     try:
         yield conn
         conn.commit()
