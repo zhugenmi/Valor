@@ -181,6 +181,18 @@ def _filter_state_delta(state_delta: dict) -> dict:
     return filtered
 
 
+def _extract_citations(state: dict, node_name: str) -> list[dict]:
+    """Pull `{node_name}_citations` from state metadata and normalize to dicts."""
+    citations = state.get("metadata", {}).get(f"{node_name}_citations", []) or []
+    out: list[dict] = []
+    for c in citations:
+        if hasattr(c, "model_dump"):
+            out.append(c.model_dump())
+        elif isinstance(c, dict):
+            out.append(c)
+    return out
+
+
 def _extract_final_decision(state: dict) -> dict | None:
     """Extract the portfolio_management_agent's final message as a dict.
 
@@ -638,14 +650,17 @@ async def agent_stream(body: dict):
                             markdown = await _polish_node_output(ticker, node_name, state_delta)
                             if markdown:
                                 filtered_state["polished_markdown"] = markdown
+                            citations = _extract_citations(accumulated_state, node_name)
                             yield _sse("agent_completed", {
                                 "conversation_id": conversation_id,
                                 "thread_id": thread_id,
                                 "agent": node_name,
                                 "state": filtered_state,
+                                "citations": citations,
                             })
                             _persist("assistant", "agent_completed",
-                                     json.dumps({"agent": node_name, "state": filtered_state},
+                                     json.dumps({"agent": node_name, "state": filtered_state,
+                                                 "citations": citations},
                                                 default=_json_default, ensure_ascii=False))
                     elif event_type == "debate_stage":
                         sub_key, sub_payload = payload
