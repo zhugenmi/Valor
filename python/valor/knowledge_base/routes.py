@@ -29,6 +29,7 @@ from valor.knowledge_base.models import (
     ChunkItem,
     DocumentListItem,
     KBDoc,
+    SearchResultItem,
 )
 from valor.knowledge_base.parser import (
     extract_publish_date,
@@ -36,6 +37,7 @@ from valor.knowledge_base.parser import (
     extract_ticker,
     parse,
 )
+from valor.knowledge_base.retriever import retrieve as _retrieve
 from valor.knowledge_base.storage import delete_file, save_upload
 
 router = APIRouter(prefix="/api/v1", tags=["Knowledge Base"])
@@ -260,3 +262,23 @@ async def reindex_doc(doc_id: str, strategy_name: str = None):
 @router.get("/kb/categories")
 async def get_categories():
     return ok(CategoryDict().model_dump())
+
+
+@router.post("/kb/search")
+async def kb_search(body: dict):
+    """Manual retrieval endpoint for debugging / frontend 试检索."""
+    query = body.get("query", "")
+    top_k = body.get("top_k", 5)
+    vintage_filter = body.get("vintage_filter")
+    if not query:
+        return fail(400, "query is required")
+    results = _retrieve(query, top_k=top_k, vintage_filter=vintage_filter)
+    chunks = [
+        ChunkItem(
+            chunk_id=r.chunk_id, doc_id=r.doc_id, seq=0, text=r.text,
+            page_no=r.page_no, heading_path=r.heading_path,
+            token_count=len(r.text),
+        ) for r in results
+    ]
+    item = SearchResultItem(query=query, chunks=chunks)
+    return ok(item.model_dump())
