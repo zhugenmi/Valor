@@ -16,8 +16,10 @@ from valor.server.envelope import fail, ok
 from valor.knowledge_base.constants import VINTAGE_RULES, select_strategy
 from valor.knowledge_base.indexer import index_document, reindex_document
 from valor.knowledge_base.kb_store import (
+    delete_correction as _delete_correction,
     delete_document as _delete_doc,
     get_chunks_by_doc,
+    get_corrections_by_doc as _get_corrections_by_doc,
     get_document,
     insert_document,
     is_sha256_exists,
@@ -282,3 +284,20 @@ async def kb_search(body: dict):
     ]
     item = SearchResultItem(query=query, chunks=chunks)
     return ok(item.model_dump())
+
+
+@router.get("/kb/documents/{doc_id}/corrections")
+async def get_doc_corrections(doc_id: str):
+    """List financial corrections sourced from a given document."""
+    doc = get_document(doc_id)
+    if doc is None:
+        return fail(404, "document not found")
+    items = _get_corrections_by_doc(doc_id)
+    return ok([i.model_dump() for i in items])
+
+
+@router.delete("/kb/corrections/{correction_id}")
+async def revoke_correction(correction_id: str):
+    """Revoke (delete) a correction. Idempotent."""
+    _delete_correction(correction_id)
+    return ok({"correction_id": correction_id, "deleted": True})
