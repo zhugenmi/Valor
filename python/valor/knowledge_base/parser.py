@@ -45,7 +45,19 @@ def parse(file_path: Path, mime_type: str) -> ParsedDocument:
     """Dispatch parser by mime_type."""
     if mime_type == "application/pdf":
         return parse_pdf(file_path)
-    raise NotImplementedError(f"Task 2.2 will implement {mime_type} parsing")
+    if mime_type in (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/msword",
+    ):
+        return parse_word(file_path)
+    if mime_type in (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+    ):
+        return parse_excel(file_path)
+    if mime_type in ("text/plain", "text/markdown", "text/csv"):
+        return parse_text(file_path, mime_type)
+    raise ValueError(f"unsupported mime_type: {mime_type}")
 
 
 def parse_pdf(file_path: Path) -> ParsedDocument:
@@ -85,3 +97,75 @@ def _extract_headings_from_page(page, page_no: int, tree: list[HeadingNode]) -> 
         avg_size = sum(w.get("size", 0) for w in words_in_line) / len(words_in_line)
         if avg_size >= 14:
             tree.append(HeadingNode(level=1, text=text, page_no=page_no))
+
+
+def parse_word(file_path: Path) -> ParsedDocument:
+    """Parse Word .docx with python-docx."""
+    from docx import Document as DocxDocument
+
+    doc = ParsedDocument(
+        file_path=str(file_path),
+        mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    d = DocxDocument(str(file_path))
+    text_parts: list[str] = []
+    for para in d.paragraphs:
+        text = para.text.strip()
+        if text:
+            text_parts.append(text)
+            # Heading detection by style
+            if para.style and para.style.name and para.style.name.startswith("Heading"):
+                try:
+                    level = int(para.style.name.split()[-1])
+                except ValueError:
+                    level = 1
+                doc.heading_tree.append(HeadingNode(level=level, text=text, page_no=1))
+    # Tables
+    for tbl in d.tables:
+        rows = [[cell.text for cell in row.cells] for row in tbl.rows]
+        doc.tables.append(ParsedTable(page_no=1, rows=rows))
+    doc.full_text = "\n\n".join(text_parts)
+    doc.pages.append(ParsedPage(page_no=1, text=doc.full_text))
+    return doc
+
+
+def parse_excel(file_path: Path) -> ParsedDocument:
+    """Parse Excel .xlsx with openpyxl: each sheet -> markdown table."""
+    import openpyxl
+
+    doc = ParsedDocument(
+        file_path=str(file_path),
+        mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    wb = openpyxl.load_workbook(str(file_path), read_only=True, data_only=True)
+    text_parts: list[str] = []
+    for ws in wb.worksheets:
+        text_parts.append(f"## {ws.title}\n")
+        rows: list[list[str]] = []
+        for row in ws.iter_rows(values_only=True):
+            cells = [str(c) if c is not None else "" for c in row]
+            if any(cells):
+                rows.append(cells)
+                text_parts.append("| " + " | ".join(cells) + " |")
+        if rows:
+            doc.tables.append(ParsedTable(page_no=1, rows=rows, caption=ws.title))
+    wb.close()
+    doc.full_text = "\n".join(text_parts)
+    doc.pages.append(ParsedPage(page_no=1, text=doc.full_text))
+    return doc
+
+
+def parse_text(file_path: Path, mime_type: str) -> ParsedDocument:
+    """Parse plain text / markdown."""
+    doc = ParsedDocument(file_path=str(file_path), mime_type=mime_type)
+    text = file_path.read_text(encoding="utf-8")
+    doc.full_text = text
+    doc.pages.append(ParsedPage(page_no=1, text=text))
+    if mime_type == "text/markdown":
+        for line in text.splitlines():
+            if line.startswith("#"):
+                level = len(line) - len(line.lstrip("#"))
+                doc.heading_tree.append(
+                    HeadingNode(level=level, text=line.lstrip("# ").strip(), page_no=1)
+                )
+    return doc

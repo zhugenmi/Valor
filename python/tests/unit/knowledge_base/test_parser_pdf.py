@@ -73,5 +73,5 @@ def test_parse_pdf_heading_tree(test_pdf):
 
 
 def test_parse_dispatcher_raises_on_unsupported():
-    with pytest.raises(NotImplementedError, match="Task 2.2"):
-        parse(Path("/nonexistent.docx"), mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    with pytest.raises(ValueError, match="unsupported"):
+        parse(Path("/nonexistent.bin"), mime_type="application/octet-stream")
