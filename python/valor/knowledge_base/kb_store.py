@@ -1,9 +1,11 @@
 """SQLite CRUD for knowledge base tables. License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial."""
 from __future__ import annotations
 
+import uuid
+from datetime import datetime
 from typing import Any
 
-from valor.knowledge_base.models import Chunk, KBDoc
+from valor.knowledge_base.models import Chunk, CorrectionItem, KBDoc
 from valor.server.db import get_conn
 from valor.server import db as _db
 
@@ -173,4 +175,61 @@ def insert_fts(chunk_ids: list[str], texts: list[str]) -> None:
         conn.executemany(
             "INSERT INTO kb_chunks_fts (chunk_id, text) VALUES (?, ?)",
             list(zip(chunk_ids, texts)),
+        )
+
+
+# ---------------------------------------------------------------------------
+# corrections CRUD
+# ---------------------------------------------------------------------------
+
+def insert_correction(
+    ticker: str,
+    report_period: str,
+    field_name: str,
+    original_value: str | None,
+    corrected_value: str,
+    unit: str | None,
+    source_doc_id: str,
+    source_page: int | None,
+    reason: str = "disclosure_authoritative",
+) -> str:
+    correction_id = str(uuid.uuid4())
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO kb_financial_corrections
+               (correction_id, ticker, report_period, field_name, original_value,
+                corrected_value, unit, source_doc_id, source_page, corrected_at, reason)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (correction_id, ticker, report_period, field_name, original_value,
+             corrected_value, unit, source_doc_id, source_page,
+             datetime.utcnow().isoformat(), reason),
+        )
+    return correction_id
+
+
+def get_corrections(ticker: str, report_period: str) -> list[CorrectionItem]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM kb_financial_corrections WHERE ticker = ? AND report_period = ? "
+            "ORDER BY datetime(corrected_at) DESC",
+            (ticker, report_period),
+        ).fetchall()
+    return [CorrectionItem.model_validate(dict(r)) for r in rows]
+
+
+def get_corrections_by_doc(doc_id: str) -> list[CorrectionItem]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM kb_financial_corrections WHERE source_doc_id = ? "
+            "ORDER BY datetime(corrected_at) DESC",
+            (doc_id,),
+        ).fetchall()
+    return [CorrectionItem.model_validate(dict(r)) for r in rows]
+
+
+def delete_correction(correction_id: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM kb_financial_corrections WHERE correction_id = ?",
+            (correction_id,),
         )

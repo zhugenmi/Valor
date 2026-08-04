@@ -1,11 +1,18 @@
 """Financial fact extraction + correction. License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial."""
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
+import os
 import re
 
 from valor.knowledge_base.constants import FIELD_ALIASES
 from valor.knowledge_base.models import FinancialFact
 from valor.knowledge_base.parser import ParsedDocument
+
+
+_logger = logging.getLogger(__name__)
 
 
 _ALIAS_TO_FIELD: dict[str, str] = {}
@@ -92,3 +99,111 @@ def extract_financial_facts(
             seen.add(field_name)
 
     return facts
+
+
+# ---------------------------------------------------------------------------
+# verify_and_correct
+# ---------------------------------------------------------------------------
+
+def _normalize_cached(df_or_dict: object) -> dict[str, float]:
+    """Normalize DataRouter return (DataFrame or dict) to {field_name: value}.
+
+    DataRouter.get_financial_indicators returns a DataFrame with akshare-native
+    Chinese column names. We take the latest row (iloc[0]) and map columns to
+    our field_name keys via FIELD_ALIASES contains-match.
+    """
+    if df_or_dict is None:
+        return {}
+    if isinstance(df_or_dict, dict):
+        out: dict[str, float] = {}
+        for k, v in df_or_dict.items():
+            if v is None:
+                continue
+            try:
+                out[k] = float(v)
+            except (ValueError, TypeError):
+                continue
+        return out
+    try:
+        import pandas as pd  # noqa: PLC0415
+        if isinstance(df_or_dict, pd.DataFrame) and not df_or_dict.empty:
+            row = df_or_dict.iloc[0]
+            result: dict[str, float] = {}
+            for col in df_or_dict.columns:
+                val = row[col]
+                if pd.isna(val):
+                    continue
+                field = _match_field(str(col))
+                if field and field not in result:
+                    try:
+                        result[field] = float(val)
+                    except (ValueError, TypeError):
+                        pass
+            return result
+    except Exception as exc:
+        _logger.debug("normalize_cached failed: %s", exc)
+    return {}
+
+
+def verify_and_correct_for_doc(doc_id: str, parsed: ParsedDocument) -> int:
+    """Verify extracted facts against DataRouter cache, write corrections for diffs.
+
+    Called by indexer after chunking. Returns the number of corrections written.
+    """
+    from valor.knowledge_base.kb_store import get_document, insert_correction
+    from valor.knowledge_base.parser import extract_report_period, extract_ticker
+
+    doc = get_document(doc_id)
+    if doc is None or doc.category != "disclosure":
+        return 0
+
+    meta = json.loads(doc.meta_json) if doc.meta_json else {}
+    if not meta.get("enable_correction", True):
+        return 0
+
+    ticker = doc.ticker or extract_ticker(parsed)
+    report_period = meta.get("report_period") or extract_report_period(parsed)
+    if not ticker or not report_period:
+        return 0
+
+    facts = extract_financial_facts(parsed, ticker, report_period)
+    if not facts:
+        return 0
+
+    cached: dict[str, float] = {}
+    try:
+        from valor.adapters.data.factory import build_data_router
+        router = build_data_router()
+        raw = asyncio.run(router.get_financial_indicators(ticker))
+        cached = _normalize_cached(raw)
+    except Exception as exc:
+        _logger.warning("failed to fetch cached financials for %s: %s", ticker, exc)
+        cached = {}
+
+    tolerance = float(os.getenv("VALOR_KB_CORRECTION_TOLERANCE", "0.01"))
+    count = 0
+    for fact in facts:
+        cached_val = cached.get(fact.field_name)
+        if cached_val is None:
+            insert_correction(
+                ticker=ticker, report_period=report_period, field_name=fact.field_name,
+                original_value=None, corrected_value=str(fact.value), unit=fact.unit,
+                source_doc_id=doc_id, source_page=fact.source_page,
+            )
+            count += 1
+            continue
+        diff = abs(fact.value - cached_val) / max(abs(cached_val), 1e-9)
+        if diff > tolerance:
+            insert_correction(
+                ticker=ticker, report_period=report_period, field_name=fact.field_name,
+                original_value=str(cached_val), corrected_value=str(fact.value),
+                unit=fact.unit, source_doc_id=doc_id, source_page=fact.source_page,
+            )
+            count += 1
+    return count
+
+
+def get_corrections(ticker: str, report_period: str):
+    """Proxy to kb_store.get_corrections for re-export."""
+    from valor.knowledge_base.kb_store import get_corrections as _get
+    return _get(ticker, report_period)
