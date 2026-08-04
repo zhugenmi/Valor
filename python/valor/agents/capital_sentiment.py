@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 
 from langchain_core.messages import HumanMessage
 
+from valor.agents._kb_helpers import build_kb_section, extract_citations
 from valor.agents.state import AgentState, show_agent_reasoning, show_workflow_status
 from valor.tools.news_crawler import get_stock_news
 from valor.tools.openrouter_config import get_chat_completion
@@ -95,6 +96,7 @@ def capital_sentiment_agent(state: AgentState):
     data = state["data"]
     symbol = data["ticker"]
     end_date = data.get("end_date")
+    citations = []
     logger.info("💰 正在进行资金面与情绪分析: %s", symbol)
 
     limits = get_news_limits()
@@ -127,18 +129,24 @@ def capital_sentiment_agent(state: AgentState):
         sentiment_block = _format_news_block(recent_sentiment)
         capital_block = _format_news_block(recent_capital)
 
+        kb_ctx = state["data"].get("kb_context", {}).get("capital_sentiment", {})
+        kb_section = build_kb_section(kb_ctx)
+
         system_message = {
             "role": "system",
             "content": load_prompt("prompts/capital_sentiment/system.md"),
         }
+        user_content = format_prompt(
+            "prompts/capital_sentiment/user.md",
+            ticker=symbol,
+            sentiment_news_content=sentiment_block,
+            capital_news_content=capital_block,
+        )
+        if kb_section:
+            user_content = user_content + "\n\n" + kb_section
         user_message = {
             "role": "user",
-            "content": format_prompt(
-                "prompts/capital_sentiment/user.md",
-                ticker=symbol,
-                sentiment_news_content=sentiment_block,
-                capital_news_content=capital_block,
-            ),
+            "content": user_content,
         }
 
         try:
@@ -160,6 +168,8 @@ def capital_sentiment_agent(state: AgentState):
                     "evidence": parsed.get("evidence", []) or [],
                     "reasoning": parsed.get("reasoning", ""),
                 }
+                citations = extract_citations(raw_response, kb_ctx)
+                message_content["citations"] = [c.model_dump() for c in citations]
                 logger.info(
                     "✅ 资金面与情绪分析完成: sentiment=%s flow=%s",
                     message_content["sentiment"],
@@ -182,5 +192,5 @@ def capital_sentiment_agent(state: AgentState):
     return {
         "messages": state["messages"] + [message],
         "data": {**data, "capital_sentiment_analysis": message_content},
-        "metadata": state["metadata"],
+        "metadata": {**state["metadata"], "capital_sentiment_citations": citations},
     }

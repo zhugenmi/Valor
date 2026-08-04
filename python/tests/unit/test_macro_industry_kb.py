@@ -3,7 +3,8 @@
 License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial
 """
 
-from valor.agents.macro_industry import _build_kb_section, _extract_citations
+from valor.agents._kb_helpers import build_kb_section as _build_kb_section
+from valor.agents._kb_helpers import extract_citations as _extract_citations
 
 
 def test_build_kb_section_empty_when_skipped():

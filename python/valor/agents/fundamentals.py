@@ -6,6 +6,7 @@ import json
 
 from langchain_core.messages import HumanMessage
 
+from valor.agents._kb_helpers import build_kb_section, extract_citations
 from valor.agents.state import AgentState, show_agent_reasoning, show_workflow_status
 from valor.utils.logging_config import setup_logger
 from valor.utils.api_utils import agent_endpoint
@@ -245,6 +246,8 @@ def fundamentals_agent(state: AgentState):
     show_workflow_status("Fundamentals Analyst")
     show_reasoning = state["metadata"]["show_reasoning"]
     data = state["data"]
+    citations = []
+    kb_ctx = state["data"].get("kb_context", {}).get("fundamentals", {})
     metrics = data.get("financial_metrics", [{}])[0] or {}
     cluster_key = data.get("cluster", "conglomerate")
     config = INDUSTRY_CLUSTERS.get(cluster_key, INDUSTRY_CLUSTERS["conglomerate"])
@@ -308,5 +311,5 @@ def fundamentals_agent(state: AgentState):
     return {
         "messages": [message],
         "data": {**data, "fundamental_analysis": message_content},
-        "metadata": state["metadata"],
+        "metadata": {**state["metadata"], "fundamentals_citations": citations},
     }

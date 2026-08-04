@@ -13,8 +13,9 @@ from datetime import datetime, timedelta
 
 from langchain_core.messages import HumanMessage
 
+from valor.agents._kb_helpers import build_kb_section as _build_kb_section
+from valor.agents._kb_helpers import extract_citations as _extract_citations
 from valor.agents.state import AgentState, show_agent_reasoning, show_workflow_status
-from valor.core.protocols import Citation
 from valor.tools.news_crawler import get_stock_news
 from valor.tools.openrouter_config import get_chat_completion
 from valor.utils.api_utils import agent_endpoint, log_llm_interaction
@@ -94,48 +95,6 @@ def _default_payload(reasoning: str) -> dict:
     }
 
 
-def _build_kb_section(kb_ctx: dict) -> str:
-    """Build KB context section for user message. Empty if skipped/no chunks."""
-    if not kb_ctx or kb_ctx.get("skipped"):
-        return ""
-    chunks = kb_ctx.get("chunks") or []
-    if not chunks:
-        return ""
-    lines = ["## 知识库参考（按相关性排序）"]
-    for i, c in enumerate(chunks, 1):
-        lines.append(
-            f"[C{i}]《{c.get('doc_title', '')}》"
-            f"(发布: {c.get('publish_date', '未知')}, 时效: {c.get('vintage', 'unknown')})"
-        )
-        lines.append(f"  正文：{c.get('text', '')}")
-    return "\n".join(lines)
-
-
-def _extract_citations(text: str, kb_ctx: dict) -> list[Citation]:
-    """Extract [Cn] references from LLM output and map to chunks."""
-    if not kb_ctx or kb_ctx.get("skipped"):
-        return []
-    chunks = kb_ctx.get("chunks") or []
-    if not chunks:
-        return []
-    refs = set(re.findall(r"\[C(\d+)\]", text))
-    citations = []
-    for ref in sorted(refs, key=int):
-        idx = int(ref) - 1
-        if 0 <= idx < len(chunks):
-            c = chunks[idx]
-            citations.append(Citation(
-                chunk_id=c.get("chunk_id", ""),
-                doc_id=c.get("doc_id", ""),
-                doc_title=c.get("doc_title", ""),
-                publish_date=c.get("publish_date", ""),
-                vintage=c.get("vintage", "unknown"),
-                page_no=c.get("page_no"),
-                cited_text=c.get("text", "")[:200],
-            ))
-    return citations
-
-
 @agent_endpoint("macro_industry", "宏观与行业分析师，覆盖宏观经济/行业前景/政策影响/政策风险扫描")
 def macro_industry_agent(state: AgentState):
     """Merged macro + industry analysis agent."""
@@ -144,7 +103,7 @@ def macro_industry_agent(state: AgentState):
     data = state["data"]
     symbol = data["ticker"]
     end_date = data.get("end_date")
-    citations: list[Citation] = []
+    citations = []
     logger.info("🧠 正在进行宏观与行业分析: %s", symbol)
 
     limits = get_news_limits()
