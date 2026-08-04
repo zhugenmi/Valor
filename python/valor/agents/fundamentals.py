@@ -6,7 +6,7 @@ import json
 
 from langchain_core.messages import HumanMessage
 
-from valor.agents._kb_helpers import build_kb_section, extract_citations
+from valor.agents._kb_helpers import build_correction_section, build_kb_section, extract_citations
 from valor.agents.state import AgentState, show_agent_reasoning, show_workflow_status
 from valor.utils.logging_config import setup_logger
 from valor.utils.api_utils import agent_endpoint
@@ -278,6 +278,17 @@ def fundamentals_agent(state: AgentState):
 
     evidence = {k: float(v) for k, v in metrics.items() if isinstance(v, (int, float))}
 
+    ticker = data.get("ticker") or data.get("symbol") or ""
+    report_period = data.get("end_date") or metrics.get("report_date") or ""
+    correction_section = build_correction_section(ticker, report_period, kb_ctx)
+    corrections_list = []
+    if correction_section:
+        try:
+            from valor.knowledge_base.corrector import get_corrections as _get_corrections
+            corrections_list = [c.model_dump() for c in _get_corrections(ticker, report_period)]
+        except Exception:
+            pass
+
     message_content = {
         "signal": overall_signal,
         "confidence": confidence_str,
@@ -296,6 +307,7 @@ def fundamentals_agent(state: AgentState):
             config, reasoning, overall_signal, confidence_str, overall
         ),
         "summary": _build_summary(config, reasoning, overall_signal, confidence_str, data),
+        "data_corrections": correction_section,
     }
 
     message = HumanMessage(
@@ -311,5 +323,9 @@ def fundamentals_agent(state: AgentState):
     return {
         "messages": [message],
         "data": {**data, "fundamental_analysis": message_content},
-        "metadata": {**state["metadata"], "fundamentals_citations": citations},
+        "metadata": {
+            **state["metadata"],
+            "fundamentals_citations": citations,
+            "fundamentals_corrections": corrections_list,
+        },
     }

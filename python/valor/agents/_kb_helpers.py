@@ -46,3 +46,37 @@ def extract_citations(text: str, kb_ctx: dict) -> list[Citation]:
                 cited_text=c.get("text", "")[:200],
             ))
     return citations
+
+
+def build_correction_section(ticker: str, report_period: str | None, kb_ctx: dict) -> str:
+    """Build '## 数据修正提示' section if corrections exist for this ticker/period."""
+    if not ticker or not report_period:
+        return ""
+    try:
+        from valor.knowledge_base.corrector import get_corrections
+        corrections = get_corrections(ticker, report_period)
+    except Exception:
+        return ""
+    if not corrections:
+        return ""
+    chunks = kb_ctx.get("chunks") or []
+    doc_to_ref = {c.get("doc_id"): f"[C{i+1}]" for i, c in enumerate(chunks)}
+    lines = ["## 数据修正提示"]
+    lines.append(f"以下字段已根据披露文档修正（ticker={ticker}, period={report_period}）：")
+    for c in corrections[:10]:
+        ref = doc_to_ref.get(c.source_doc_id, "")
+        diff_str = ""
+        if c.original_value:
+            try:
+                old = float(c.original_value)
+                new = float(c.corrected_value)
+                diff_pct = abs(new - old) / max(abs(old), 1e-9) * 100
+                diff_str = f"（原缓存值: {c.original_value}, 差异 {diff_pct:.2f}%）"
+            except ValueError:
+                diff_str = f"（原缓存值: {c.original_value}）"
+        line = (
+            f"- {c.field_name}({c.report_period}): {c.corrected_value} {c.unit or ''} "
+            f"{ref} {diff_str}"
+        ).strip()
+        lines.append(line)
+    return "\n".join(lines)
