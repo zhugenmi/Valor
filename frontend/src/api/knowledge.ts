@@ -44,17 +44,19 @@ export interface KBCorrection {
   reason: string | null;
 }
 
-export interface KBCategoryItem {
+export interface KBSubType {
   name: string;
   display_name: string;
 }
 
-export interface KBCategory {
-  research: KBCategoryItem[];
-  disclosure: KBCategoryItem[];
-  general: KBCategoryItem[];
-  regulatory: KBCategoryItem[];
-  [key: string]: KBCategoryItem[];
+export interface KBCategoryInfo {
+  category: string;
+  display_name: string;
+  sub_types: KBSubType[];
+}
+
+export interface KBCategoryDict {
+  categories: KBCategoryInfo[];
 }
 
 export interface KBSearchResult {
@@ -103,7 +105,7 @@ export const kbApi = {
       ApiResponse<{ doc_id: string; chunk_count: number; status: string }>
     >(`${BASE}/documents/${docId}/reindex${buildQS({ strategy_name: strategyName })}`, undefined),
   categories: () =>
-    apiClient.get<ApiResponse<KBCategory>>(`${BASE}/categories`),
+    apiClient.get<ApiResponse<KBCategoryDict>>(`${BASE}/categories`),
   search: (query: string, topK = 5) =>
     apiClient.post<ApiResponse<KBSearchResult>>(`${BASE}/search`, {
       query,
