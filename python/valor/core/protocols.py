@@ -20,6 +20,18 @@ class Message(BaseModel):
     content: str
 
 
+class Citation(BaseModel):
+    """A citation back to a knowledge base chunk."""
+
+    chunk_id: str
+    doc_id: str
+    doc_title: str
+    publish_date: str
+    vintage: str
+    page_no: int | None = None
+    cited_text: str
+
+
 class Signal(BaseModel):
     """A single agent's directional opinion on a ticker."""
 
@@ -27,6 +39,7 @@ class Signal(BaseModel):
     signal: SignalType
     confidence: float = Field(ge=0.0, le=1.0)
     reasoning: str
+    citations: list[Citation] = []
 
 
 class Action(BaseModel):
