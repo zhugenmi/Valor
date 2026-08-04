@@ -110,6 +110,7 @@
     "home": "首页",
     "analysis": "股票诊断",
     "portfolio": "我的组合",
+    "knowledge": "知识库",
     "agents": "Agent 市场",
     "conversations": "对话",
     "setting": "设置"
@@ -379,6 +380,41 @@
         "description": "按自定义时间表推送个性化新闻更新。",
         "preset": "今天 A 股市场有什么重要资讯？"
       }
+    }
+  },
+  "knowledge": {
+    "title": "知识库管理",
+    "upload": "上传文档",
+    "list": "文档列表",
+    "detail": "文档详情",
+    "preview": "原文预览",
+    "chunks": "分块列表",
+    "corrections": "数据修正",
+    "metadata": "元数据",
+    "search": "检索",
+    "searchPlaceholder": "输入检索关键词",
+    "empty": "暂无文档",
+    "loading": "加载中...",
+    "uploading": "上传中...",
+    "dropFile": "拖拽文件到此或点击选择",
+    "prevPage": "上一页",
+    "nextPage": "下一页",
+    "revoke": "撤销",
+    "reindex": "重建索引",
+    "delete": "删除",
+    "deleteConfirm": "确认删除该文档？",
+    "noCorrections": "暂无修正记录",
+    "vintage": {
+      "current": "最新",
+      "recent": "近期",
+      "legacy": "归档",
+      "obsolete": "已废弃"
+    },
+    "category": {
+      "research": "证券研究报告",
+      "disclosure": "企业融资与披露",
+      "general": "金融行业通用文书",
+      "regulatory": "金融监管与政策"
     }
   }
 }

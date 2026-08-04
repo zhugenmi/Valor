@@ -110,6 +110,7 @@
     "home": "Home",
     "analysis": "Stock Analysis",
     "portfolio": "Portfolio",
+    "knowledge": "Knowledge Base",
     "agents": "Agent Market",
     "conversations": "Conversations",
     "setting": "Setting"
@@ -379,6 +380,41 @@
         "description": "Personalized news updates on a custom schedule.",
         "preset": "What are the key market updates for A-shares today?"
       }
+    }
+  },
+  "knowledge": {
+    "title": "Knowledge Base",
+    "upload": "Upload Document",
+    "list": "Document List",
+    "detail": "Document Detail",
+    "preview": "Source Preview",
+    "chunks": "Chunks",
+    "corrections": "Corrections",
+    "metadata": "Metadata",
+    "search": "Search",
+    "searchPlaceholder": "Enter search keywords",
+    "empty": "No documents",
+    "loading": "Loading...",
+    "uploading": "Uploading...",
+    "dropFile": "Drop file here or click to select",
+    "prevPage": "Previous",
+    "nextPage": "Next",
+    "revoke": "Revoke",
+    "reindex": "Reindex",
+    "delete": "Delete",
+    "deleteConfirm": "Delete this document?",
+    "noCorrections": "No corrections",
+    "vintage": {
+      "current": "Current",
+      "recent": "Recent",
+      "legacy": "Legacy",
+      "obsolete": "Obsolete"
+    },
+    "category": {
+      "research": "Research Report",
+      "disclosure": "Disclosure",
+      "general": "General",
+      "regulatory": "Regulatory"
     }
   }
 }
