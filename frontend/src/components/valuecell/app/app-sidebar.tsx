@@ -6,6 +6,7 @@ import { useGetAgentList } from "@/api/agent";
 import {
   Analysis,
   Conversation,
+  Knowledge,
   Market,
   NewConversation,
   Portfolio,
@@ -70,6 +71,12 @@ const AppSidebar: FC = () => {
       icon: Portfolio,
       label: t("nav.portfolio"),
       to: "/portfolio",
+    },
+    {
+      id: "knowledge",
+      icon: Knowledge,
+      label: t("nav.knowledge"),
+      to: "/knowledge",
     },
   ];
 

@@ -38,6 +38,11 @@ export default [
     route("/:id", "app/portfolio/detail.tsx"),
   ]),
 
+  ...prefix("/knowledge", [
+    index("app/knowledge/index.tsx"),
+    route("/:docId", "app/knowledge/detail.tsx"),
+  ]),
+
   // router for test components
   route("/test", "app/test.tsx"),
 ] satisfies RouteConfig;
