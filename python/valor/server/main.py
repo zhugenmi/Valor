@@ -19,6 +19,7 @@ from valor.server.routes.system import router as system_router
 from valor.server.routes.tasks import router as tasks_router
 from valor.server.routes.user_profile import router as user_profile_router
 from valor.server.routes.portfolio import router as portfolio_router
+from valor.knowledge_base.routes import router as kb_router
 
 
 @asynccontextmanager
@@ -62,3 +63,4 @@ app.include_router(stock_router)
 app.include_router(models_router)
 app.include_router(user_profile_router)
 app.include_router(portfolio_router)
+app.include_router(kb_router)
