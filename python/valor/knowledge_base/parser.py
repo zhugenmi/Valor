@@ -7,6 +7,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import re as _re
+
 import pdfplumber
 
 
@@ -169,3 +171,57 @@ def parse_text(file_path: Path, mime_type: str) -> ParsedDocument:
                     HeadingNode(level=level, text=line.lstrip("# ").strip(), page_no=1)
                 )
     return doc
+
+
+# ---------------------------------------------------------------------------
+# Metadata extraction (Task 2.3)
+# ---------------------------------------------------------------------------
+
+_CN_NUM_MAP = {"一": 1, "二": 2, "三": 3, "四": 4, "1": 1, "2": 2, "3": 3, "4": 4}
+
+_DATE_PATTERNS = [
+    _re.compile(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日"),
+    _re.compile(r"(\d{4})-(\d{2})-(\d{2})"),
+    _re.compile(r"(\d{4})/(\d{1,2})/(\d{1,2})"),
+]
+
+_TICKER_PATTERN = _re.compile(r"(?:股票代码|代码|证券代码)?[：:\s]*(6\d{5}|0\d{5}|3\d{5}|8\d{5}|4\d{5})")
+
+_PERIOD_PATTERNS = [
+    (_re.compile(r"(\d{4})\s*年第([一二三四1234])季度"), lambda m: f"{m.group(1)}Q{_CN_NUM_MAP[m.group(2)]}"),
+    (_re.compile(r"(\d{4})Q([1-4])"), lambda m: f"{m.group(1)}Q{m.group(2)}"),
+    (_re.compile(r"(\d{4})-(\d{2})-(\d{2})"), lambda m: f"{m.group(1)}-{m.group(2)}-{m.group(3)}"),
+]
+
+
+def extract_publish_date(parsed: ParsedDocument) -> str | None:
+    """Extract publish date from first page text. Returns YYYY-MM-DD or None."""
+    if not parsed.pages:
+        return None
+    text = parsed.pages[0].text
+    for pat in _DATE_PATTERNS:
+        m = pat.search(text)
+        if m:
+            y, mo, d = m.groups()
+            return f"{int(y):04d}-{int(mo):02d}-{int(d):02d}"
+    return None
+
+
+def extract_ticker(parsed: ParsedDocument) -> str | None:
+    """Extract A-share ticker (6-digit code) from first page."""
+    if not parsed.pages:
+        return None
+    m = _TICKER_PATTERN.search(parsed.pages[0].text)
+    return m.group(1) if m else None
+
+
+def extract_report_period(parsed: ParsedDocument) -> str | None:
+    """Extract report period like 2024Q3 or 2024-09-30."""
+    if not parsed.pages:
+        return None
+    text = parsed.pages[0].text
+    for pat, fmt in _PERIOD_PATTERNS:
+        m = pat.search(text)
+        if m:
+            return fmt(m)
+    return None
