@@ -29,6 +29,7 @@ from valor.agents.risk_manager import risk_management_agent
 from valor.agents.state import AgentState
 from valor.agents.technicals import technical_analyst_agent
 from valor.agents.valuation import valuation_agent
+from valor.knowledge_base.constants import KB_AGENT_PROFILES
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +56,35 @@ class GraphState(TypedDict):
 # ---------------------------------------------------------------------------
 # Node functions
 # ---------------------------------------------------------------------------
+
+def _run_kb_retrieval(state: GraphState) -> Dict[str, Any]:
+    """Knowledge base retrieval node: per-agent RAG with pre-filter."""
+    if not state["metadata"].get("kb_enabled", True):
+        return {"data": {"kb_context": {}}}
+
+    ticker = state["data"].get("ticker", "")
+    kb_agents = state["metadata"].get("kb_agents") or [
+        a for a, p in KB_AGENT_PROFILES.items() if p["enabled"]
+    ]
+
+    kb_context: Dict[str, Any] = {}
+    for agent_name in kb_agents:
+        profile = KB_AGENT_PROFILES.get(agent_name)
+        if not profile:
+            continue
+        query = profile["query_tpl"].format(ticker=ticker)
+        try:
+            from valor.tools.kb_search import search
+            chunks = search(query, top_k=5)
+        except Exception:
+            chunks = []
+        if chunks:
+            kb_context[agent_name] = {"chunks": chunks}
+        else:
+            kb_context[agent_name] = {"skipped": True, "reason": "low_relevance"}
+
+    return {"data": {"kb_context": kb_context}}
+
 
 def _run_market_data(state: GraphState) -> Dict[str, Any]:
     """Collect market data first (sequential gate)."""
@@ -155,6 +185,7 @@ def build_workflow(
 
     # Register nodes
     workflow.add_node("market_data", _run_market_data)
+    workflow.add_node("kb_retrieval", _run_kb_retrieval)
     workflow.add_node("technicals", _run_technicals)
     workflow.add_node("fundamentals", _run_fundamentals)
     workflow.add_node("valuation", _run_valuation)
@@ -167,12 +198,13 @@ def build_workflow(
     workflow.add_node("risk_manager", _run_risk_manager)
     workflow.add_node("portfolio_manager", _run_portfolio_manager)
 
-    # Sequential gate: data collection first
+    # Sequential gate: data collection first, then KB retrieval
     workflow.set_entry_point("market_data")
+    workflow.add_edge("market_data", "kb_retrieval")
 
-    # Fan out from data to all 5 dimension agents (parallel)
+    # Fan out from kb_retrieval to all 5 dimension agents (parallel)
     for agent in ["technicals", "fundamentals", "valuation", "capital_sentiment", "macro_industry"]:
-        workflow.add_edge("market_data", agent)
+        workflow.add_edge("kb_retrieval", agent)
 
     # All 5 dimension agents converge to bull_bear_debate (fan-in)
     for agent in ["technicals", "fundamentals", "valuation", "capital_sentiment", "macro_industry"]:

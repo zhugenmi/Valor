@@ -9,6 +9,7 @@ def test_workflow_builds_with_all_nodes():
     node_names = list(wf.nodes.keys())
     expected = [
         "market_data",
+        "kb_retrieval",
         "technicals",
         "fundamentals",
         "valuation",
@@ -41,6 +42,7 @@ def test_compiled_graph_has_all_nodes():
     node_names = list(compiled.nodes.keys())
     expected_nodes = [
         "market_data",
+        "kb_retrieval",
         "technicals",
         "fundamentals",
         "valuation",
