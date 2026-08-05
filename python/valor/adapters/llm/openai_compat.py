@@ -11,7 +11,14 @@ from typing import Any
 import httpx
 from loguru import logger
 
-from valor.adapters.llm.protocol import LLMProvider, Message
+from valor.adapters.llm.protocol import (
+    LLMProvider,
+    Message,
+    RuntimeMessage,
+    ToolCall,
+    ToolCallResponse,
+    ToolSchema,
+)
 
 
 class OpenAICompatProvider:
@@ -78,6 +85,98 @@ class OpenAICompatProvider:
             return body["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise RuntimeError(f"Unexpected OpenAI API response structure: {exc}") from exc
+
+    async def chat_with_tools(
+        self,
+        messages: list[RuntimeMessage],
+        tools: list[ToolSchema],
+        *,
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        tool_choice: str = "auto",
+        **kwargs: Any,
+    ) -> ToolCallResponse:
+        """Chat completion with native tool_calls (OpenAI-compatible API).
+
+        Returns a ToolCallResponse with parsed tool_calls (or None if the
+        model finished without requesting tools).
+        """
+        import json
+
+        model_id = model or self.default_model
+        payload: dict[str, Any] = {
+            "model": model_id,
+            "messages": [m.to_openai_format() for m in messages],
+            "tools": [t.to_openai_format() for t in tools],
+            "tool_choice": tool_choice,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        payload.update(kwargs)
+
+        url = f"{self.base_url}/chat/completions"
+        logger.debug(
+            f"OpenAI tool-call API request: {url} (model={model_id}, tools={len(tools)})"
+        )
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            try:
+                resp = await client.post(
+                    url,
+                    json=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {self.api_key}",
+                    },
+                )
+                logger.info(f"OpenAI tool-call API response status: {resp.status_code}")
+                resp.raise_for_status()
+                body = resp.json()
+            except httpx.HTTPStatusError as exc:
+                logger.error(
+                    f"OpenAI tool-call API HTTP error {exc.response.status_code}: "
+                    f"{exc.response.text}"
+                )
+                raise RuntimeError(
+                    f"OpenAI tool-call API error {exc.response.status_code}: "
+                    f"{exc.response.text}"
+                ) from exc
+            except httpx.RequestError as exc:
+                logger.error(f"OpenAI tool-call API request failed: {type(exc).__name__}: {exc}")
+                raise RuntimeError(
+                    f"OpenAI tool-call API request failed: {type(exc).__name__}: {exc}"
+                ) from exc
+
+        try:
+            msg = body["choices"][0]["message"]
+            finish_reason = body["choices"][0].get("finish_reason", "stop")
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError(f"Unexpected OpenAI tool-call response structure: {exc}") from exc
+
+        content = msg.get("content")
+        raw_tool_calls = msg.get("tool_calls") or []
+        tool_calls: list[ToolCall] = []
+        for raw in raw_tool_calls:
+            try:
+                fn = raw.get("function", {})
+                args_str = fn.get("arguments", "{}")
+                args = json.loads(args_str) if args_str else {}
+                tool_calls.append(
+                    ToolCall(
+                        id=raw.get("id", ""),
+                        name=fn.get("name", ""),
+                        arguments=args if isinstance(args, dict) else {},
+                    )
+                )
+            except (json.JSONDecodeError, TypeError) as exc:
+                logger.warning(f"Failed to parse tool_call arguments: {exc}; raw={raw}")
+
+        return ToolCallResponse(
+            content=content,
+            tool_calls=tool_calls if tool_calls else None,
+            finish_reason=finish_reason,
+        )
 
 
 def verify() -> None:
