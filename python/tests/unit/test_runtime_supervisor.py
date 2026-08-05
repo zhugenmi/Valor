@@ -201,3 +201,77 @@ async def test_run_agent_runtime_yields_events_without_deadlock():
     # The message event must contain the final answer
     msg_evt = next(e for e in events if e["event"] == "message")
     assert msg_evt["data"]["payload"]["content"] == "mocked final answer"
+
+
+async def test_supervisor_injects_kb_catalog_into_system_message():
+    """KB document catalog is fetched at Supervisor start and appended to the
+    system prompt, so the LLM sees all documents without calling a tool."""
+    from valor.knowledge_base.models import KBDoc
+
+    fake_docs = [
+        KBDoc(
+            doc_id="d1",
+            title="茅台2025年报",
+            category="disclosure",
+            sub_type="annual_report",
+            mime_type="application/pdf",
+            file_path="/tmp/d1.pdf",
+            sha256="abc",
+            uploaded_at="2026-04-16T10:00:00",
+            publish_date="2026-04-16",
+            ticker="600519",
+            chunk_count=748,
+            status="ready",
+        ),
+    ]
+    provider = _FakeProvider([
+        ToolCallResponse(content="OK", tool_calls=None, finish_reason="stop"),
+    ])
+
+    async def _on_event(evt):
+        pass
+
+    with patch(
+        "valor.runtime.supervisor.kb_list_documents",
+        return_value=(fake_docs, 1),
+    ):
+        state = await run_supervisor(
+            query="知识库有哪些文档",
+            tools=get_default_tools(),
+            provider=provider,  # type: ignore[arg-type]
+            on_event=_on_event,
+        )
+
+    # First message is the system prompt; catalog must be appended
+    sys_msg = state.messages[0]
+    assert sys_msg.role == "system"
+    assert "当前知识库文档目录" in sys_msg.content
+    assert "茅台2025年报" in sys_msg.content
+    assert "600519" in sys_msg.content
+    assert "748 chunks" in sys_msg.content
+
+
+async def test_supervisor_works_when_kb_catalog_fetch_fails():
+    """If kb_list_documents raises, Supervisor still runs (catalog omitted)."""
+    provider = _FakeProvider([
+        ToolCallResponse(content="OK", tool_calls=None, finish_reason="stop"),
+    ])
+
+    async def _on_event(evt):
+        pass
+
+    with patch(
+        "valor.runtime.supervisor.kb_list_documents",
+        side_effect=RuntimeError("db down"),
+    ):
+        state = await run_supervisor(
+            query="你好",
+            tools=get_default_tools(),
+            provider=provider,  # type: ignore[arg-type]
+            on_event=_on_event,
+        )
+
+    sys_msg = state.messages[0]
+    # Catalog header (## prefix) only appears when fetch succeeded
+    assert "## 当前知识库文档目录" not in sys_msg.content
+    assert state.finished is True

@@ -28,10 +28,12 @@ from valor.conversations.storage import (
     update_conversation_status,
 )
 from valor.portfolio.storage import PortfolioNotFound
+from valor.runtime.supervisor import _SUPERVISOR_SYSTEM_PROMPT
 from valor.server.data_preflight import ensure_latest_trading_day_data
 from valor.server.intent import VALID_AGENTS, classify_intent
 from valor.server.polish import polish_decision
 from valor.server.portfolio_context import load_portfolio_context
+from valor.knowledge_base.kb_store import list_documents as kb_list_documents
 from valor.tools.kb_search import search as kb_search
 
 from valor.runtime import run_agent_runtime
@@ -314,7 +316,13 @@ async def _polish_node_output(
     return None
 
 
-_KB_CHAT_SYSTEM_PROMPT = """你是 ValorAgent 的知识库问答模式。用户提出了非股票分析的问题，知识库中有相关资料。请基于知识库参考资料回答用户问题。
+_KB_CHAT_SYSTEM_PROMPT = """你是知识库问答助手。请基于知识库参考资料回答用户问题。
+
+注意：
+- 你是智能投研助理，不是单纯的问答机器人；回答时保持投研专业视角
+- 当前知识库的完整文档目录已附在下方"当前知识库文档目录"段，你可以随时参考该目录
+- 当用户问"知识库有哪些资料/文档/知识"等列举类问题时，基于下方的"当前知识库文档目录"列出全部文档，不要只说检索到的部分
+- 知识库参考资料（检索片段）用于回答具体内容类问题；如资料不足以完整回答，如实说明并建议用户查阅原始文档
 
 要求：
 - 用中文 Markdown 格式回答
@@ -324,6 +332,29 @@ _KB_CHAT_SYSTEM_PROMPT = """你是 ValorAgent 的知识库问答模式。用户�
 - 参考资料按文档编号，同一文档的多个段落已合并为一个编号，不要拆分引用同一文档的不同段落
 - 如果资料不足以完整回答问题，如实说明并建议用户查阅原始文档
 - 200-500 字之间"""
+
+
+def _build_kb_catalog_for_chat() -> str:
+    """Fetch KB document catalog and format as compact Markdown for chat.
+
+    Returns empty string on failure so chat still works if KB is unavailable.
+    """
+    try:
+        docs, total = kb_list_documents(None, None, None, 50, 0)
+    except Exception as exc:
+        logger.warning(f"Failed to fetch KB catalog for chat: {exc}")
+        return ""
+    if not docs:
+        return ""
+    lines = [f"## 当前知识库文档目录（共 {total} 个文档）"]
+    for idx, d in enumerate(docs, 1):
+        ticker_str = f"ticker={d.ticker}" if d.ticker else "无个股"
+        pub = d.publish_date or "未注明"
+        lines.append(
+            f"{idx}. 《{d.title}》| {d.category}/{d.sub_type} | {ticker_str} "
+            f"| {d.chunk_count} chunks | {pub}"
+        )
+    return "\n".join(lines)
 
 
 async def _generate_kb_chat_reply(query: str, kb_results: list[dict]) -> str | None:
@@ -366,13 +397,19 @@ async def _generate_kb_chat_reply(query: str, kb_results: list[dict]) -> str | N
         )
 
     kb_context = "\n\n".join(doc_context_parts)
-    citations_md = "\n\n---\n📚 **数据来源：**\n" + "\n".join(citations)
+    # 用 Markdown 列表格式输出引用，一条独占一行，对齐工整
+    citations_md = "\n\n---\n📚 **数据来源：**\n\n" + "\n".join(f"- {c}" for c in citations)
     try:
         provider = get_llm_provider()
     except RuntimeError:
         return None
+    # 注入完整文档目录到 system prompt，让 LLM 能回答"知识库有哪些文档"类问题
+    system_content = _SUPERVISOR_SYSTEM_PROMPT
+    catalog = _build_kb_catalog_for_chat()
+    if catalog:
+        system_content = f"{system_content}\n\n{catalog}"
     messages = [
-        Message(role="system", content=_KB_CHAT_SYSTEM_PROMPT),
+        Message(role="system", content=system_content),
         Message(
             role="user",
             content=(
@@ -585,7 +622,7 @@ async def agent_stream(body: dict):
             reply = intent.reply or "您好，请提供股票代码以进行分析。"
             # 尝试检索知识库（非股票分析问题也可能在 KB 中有答案）
             try:
-                kb_results = await asyncio.to_thread(kb_search, query, 5)
+                kb_results = await asyncio.to_thread(kb_search, query, 10)
             except Exception:
                 kb_results = []
             if kb_results:

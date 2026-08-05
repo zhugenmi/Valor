@@ -6,7 +6,7 @@ import json
 
 from langchain_core.messages import HumanMessage
 
-from valor.agents._kb_helpers import build_correction_section, build_kb_section, extract_citations
+from valor.agents._kb_helpers import build_correction_section
 from valor.agents.state import AgentState, show_agent_reasoning, show_workflow_status
 from valor.utils.logging_config import setup_logger
 from valor.utils.api_utils import agent_endpoint

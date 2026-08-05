@@ -1,6 +1,5 @@
 from langchain_core.messages import HumanMessage
 from valor.utils.logging_config import setup_logger
-from valor.agents._kb_helpers import build_kb_section, extract_citations
 from valor.agents.state import AgentState, show_agent_reasoning, show_workflow_status
 from valor.utils.api_utils import agent_endpoint
 import json
@@ -16,7 +15,6 @@ def valuation_agent(state: AgentState):
     show_reasoning = state["metadata"]["show_reasoning"]
     data = state["data"]
     citations = []
-    kb_ctx = state["data"].get("kb_context", {}).get("valuation", {})
     metrics = data["financial_metrics"][0]
     current_financial_line_item = data["financial_line_items"][0]
     previous_financial_line_item = data["financial_line_items"][1]

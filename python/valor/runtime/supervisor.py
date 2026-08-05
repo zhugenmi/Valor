@@ -20,30 +20,57 @@ from valor.adapters.llm.protocol import (
     ToolCallingProvider,
     ToolSchema,
 )
+from valor.knowledge_base.kb_store import list_documents as kb_list_documents
 from valor.runtime.tools import Tool, execute_tool
 from valor.runtime.types import RuntimeState, ToolResult
 
 # Event callback: async fn(event_dict) -> None
 EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
-_SUPERVISOR_SYSTEM_PROMPT = """你是 ValorAgent，一个 A 股投资分析助手的主编排器（Supervisor）。
+_SUPERVISOR_SYSTEM_PROMPT = """你是 ValorAgent，一个 A 股智能投研助理的主编排器（Supervisor），专注 A 股投资分析与决策。
 
-你通过调用工具（tools）来回答用户问题。可用工具：
-- kb_search: 搜索知识库（研究报告、披露文档、监管文件）
+你可以通过调用工具（tools）来回答用户问题。可用工具：
+- kb_search: 搜索知识库内容（返回文档片段）。用户问及具体内容或概念时使用。
 - get_stock_data: 获取股票实时行情 + 财务指标
 - run_single_agent: 运行单个分析维度（技术面/基本面/估值/资金面/宏观行业）
 - run_full_analysis: 运行完整 9 节点分析工作流（诊断、买卖决策）
 
 调用原则：
-1. 纯闲聊（如"你好"、"你是谁"）不要调用工具，直接回复。
-2. 用户提到具体股票代码并要求分析时，调用 run_full_analysis 或 run_single_agent。
-3. 用户问宏观/行业/政策类问题（无个股），调用 run_single_agent with agent_name="macro_industry"。
-4. 用户问及研究报告、披露文档内容时，先调用 kb_search。
-5. 需要当前价格、PE、PB 等指标时，调用 get_stock_data。
-6. 单次回复最多调用 4 次工具，避免冗余。
-7. 工具返回错误时，向用户解释限制并给出建议，不要重试同一工具超过 2 次。
+1. 纯闲聊（如"你好"、"你是谁"）不要调用工具，直接回复。你是智能投研助理，不是单纯问答机器人。
+2. 知识库文档目录已附在下方"当前知识库文档目录"段，你可随时参考；无需调用工具查看文档列表。
+3. 用户问关于知识库中相关的内容时，调用 kb_search。
+4. 用户提到具体股票代码并要求分析时，调用 run_full_analysis 或 run_single_agent。
+5. 用户问宏观/行业/政策类问题（无个股），调用 run_single_agent with agent_name="macro_industry"。
+6. 需要当前价格、PE、PB 等指标时，调用 get_stock_data。
+7. 单次回复最多调用 4 次工具，避免冗余。
+8. 工具返回错误时，向用户解释限制并给出建议，不要重试同一工具超过 2 次。
 
 回答用中文，使用 Markdown 格式。"""
+
+
+def _build_kb_catalog_summary() -> str:
+    """Fetch KB document catalog and format as compact Markdown.
+
+    Called once per Supervisor invocation so the LLM always sees the current
+    document list without needing a tool call. Returns empty string on failure
+    so the Supervisor still works if the KB is unavailable or empty.
+    """
+    try:
+        docs, total = kb_list_documents(None, None, None, 50, 0)
+    except Exception as exc:
+        logger.warning(f"Failed to fetch KB catalog: {exc}")
+        return ""
+    if not docs:
+        return ""
+    lines = [f"## 当前知识库文档目录（共 {total} 个文档）"]
+    for idx, d in enumerate(docs, 1):
+        ticker_str = f"ticker={d.ticker}" if d.ticker else "无个股"
+        pub = d.publish_date or "未注明"
+        lines.append(
+            f"{idx}. 《{d.title}》| {d.category}/{d.sub_type} | {ticker_str} "
+            f"| {d.chunk_count} chunks | {pub}"
+        )
+    return "\n".join(lines)
 
 
 def _get_tool_by_name(tools: list[Tool], name: str) -> Tool | None:
@@ -78,8 +105,12 @@ async def run_supervisor(
         Final RuntimeState with all messages + tool_results.
     """
     state = RuntimeState(max_iterations=max_iterations)
+    system_content = _SUPERVISOR_SYSTEM_PROMPT
+    catalog = _build_kb_catalog_summary()
+    if catalog:
+        system_content = f"{system_content}\n\n{catalog}"
     state.messages = [
-        RuntimeMessage(role="system", content=_SUPERVISOR_SYSTEM_PROMPT),
+        RuntimeMessage(role="system", content=system_content),
         RuntimeMessage(role="user", content=query),
     ]
 

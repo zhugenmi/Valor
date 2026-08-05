@@ -19,6 +19,14 @@ License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial
 """
 from __future__ import annotations
 
+import argparse
+import asyncio
+import json
+import os
+import time
+import warnings
+from pathlib import Path
+
 # --- ragas 0.4.x compat shim ----------------------------------------------
 # ragas 0.4.3 imports `langchain_community.chat_models.vertexai.ChatVertexAI`
 # unconditionally at module load, but langchain_community 0.4.2 removed that
@@ -28,27 +36,19 @@ from unittest.mock import MagicMock
 sys.modules.setdefault("langchain_community.chat_models.vertexai", MagicMock())
 # --------------------------------------------------------------------------
 
-import argparse
-import asyncio
-import json
-import os
-import time
-import warnings
-from pathlib import Path
-
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv()
 
 # NOTE: langchain_openai.ChatOpenAI and ragas are imported lazily inside
 # run_eval() so that --no-llm mode (rule-based metrics only) works without
 # those optional dev deps being installed.
-from langchain_core.embeddings import Embeddings
+from langchain_core.embeddings import Embeddings  # noqa: E402
 
-from valor.knowledge_base.embedder import get_embedder
-from valor.knowledge_base.retriever import retrieve
+from valor.knowledge_base.embedder import get_embedder  # noqa: E402
+from valor.knowledge_base.retriever import retrieve  # noqa: E402
 
 METRICS = ["faithfulness", "answer_relevancy", "context_precision", "context_recall"]
 
