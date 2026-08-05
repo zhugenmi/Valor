@@ -17,6 +17,8 @@ from typing import AsyncGenerator
 from fastapi import APIRouter
 from starlette.responses import StreamingResponse
 
+from valor.adapters.llm.protocol import Message
+from valor.adapters.llm.router import get_llm_provider
 from valor.agents.workflow import agent_message_name, run_agents, stream_analysis
 from valor.conversations.models import Conversation, ConversationMessage
 from valor.conversations.storage import (
@@ -29,6 +31,7 @@ from valor.server.data_preflight import ensure_latest_trading_day_data
 from valor.server.intent import VALID_AGENTS, classify_intent
 from valor.server.polish import polish_decision
 from valor.server.portfolio_context import load_portfolio_context
+from valor.tools.kb_search import search as kb_search
 
 router = APIRouter(prefix="/api/v1", tags=["Stream"])
 
@@ -308,6 +311,82 @@ async def _polish_node_output(
     return None
 
 
+_KB_CHAT_SYSTEM_PROMPT = """你是 ValorAgent 的知识库问答模式。用户提出了非股票分析的问题，知识库中有相关资料。请基于知识库参考资料回答用户问题。
+
+要求：
+- 用中文 Markdown 格式回答
+- 严格基于参考资料内容，不要编造资料中没有的信息
+- 引用资料时标注对应的文档编号 [编号]（如 [1] [2]）
+- **同一文档编号在整个回复中最多引用 1 次**：推荐在开头总结句后标注一次（如"根据知识库资料，发行人近三年（2022-2024年）资产情况如下 [1]："），正文各段落末尾不要再重复标注 [编号]
+- 参考资料按文档编号，同一文档的多个段落已合并为一个编号，不要拆分引用同一文档的不同段落
+- 如果资料不足以完整回答问题，如实说明并建议用户查阅原始文档
+- 200-500 字之间"""
+
+
+async def _generate_kb_chat_reply(query: str, kb_results: list[dict]) -> str | None:
+    """Generate a chat reply grounded in KB chunks. Returns None on LLM failure.
+
+    Chunks from the same document are merged into a single reference so that
+    5 chunks from one doc produce one [1] citation, not [1]-[5].
+    """
+    # 按 doc_id 分组，保留首次出现顺序
+    by_doc: dict[str, list[dict]] = {}
+    doc_order: list[str] = []
+    for r in kb_results:
+        doc_id = r.get("doc_id") or ""
+        if doc_id not in by_doc:
+            by_doc[doc_id] = []
+            doc_order.append(doc_id)
+        by_doc[doc_id].append(r)
+
+    doc_context_parts: list[str] = []
+    citations: list[str] = []
+    for idx, doc_id in enumerate(doc_order, 1):
+        chunks = by_doc[doc_id]
+        first = chunks[0]
+        doc_title = first.get("doc_title") or "未知文档"
+        publish_date = first.get("publish_date") or "未知日期"
+        vintage = first.get("vintage") or "-"
+        page_nos = sorted({c.get("page_no") for c in chunks if c.get("page_no")})
+
+        # 同一文档的多个段落用分页符合并展示
+        chunks_text = "\n---\n".join(c.get("text", "") for c in chunks)
+        doc_context_parts.append(
+            f"[{idx}] 《{doc_title}》({publish_date})\n{chunks_text}"
+        )
+
+        page_str = (
+            f" p.{','.join(str(p) for p in page_nos)}" if page_nos else ""
+        )
+        citations.append(
+            f"[{idx}] 《{doc_title}》({publish_date}, {vintage}){page_str}"
+        )
+
+    kb_context = "\n\n".join(doc_context_parts)
+    citations_md = "\n\n---\n📚 **数据来源：**\n" + "\n".join(citations)
+    try:
+        provider = get_llm_provider()
+    except RuntimeError:
+        return None
+    messages = [
+        Message(role="system", content=_KB_CHAT_SYSTEM_PROMPT),
+        Message(
+            role="user",
+            content=(
+                f"用户问题：{query}\n\n"
+                f"知识库参考资料（按文档编号，同一文档的多个段落已合并）：\n"
+                f"{kb_context}"
+            ),
+        ),
+    ]
+    try:
+        reply = await provider.chat(messages=messages, temperature=0.3, max_tokens=1024)
+    except Exception as exc:
+        logger.warning(f"KB chat reply LLM call failed: {exc!r}")
+        return None
+    return (reply or "").strip() + citations_md
+
+
 _DEFAULT_PORTFOLIO_NAME = "持仓"
 
 
@@ -451,6 +530,15 @@ async def agent_stream(body: dict):
         # Chat: reply without running any workflow
         if intent.intent == "chat":
             reply = intent.reply or "您好，请提供股票代码以进行分析。"
+            # 尝试检索知识库（非股票分析问题也可能在 KB 中有答案）
+            try:
+                kb_results = await asyncio.to_thread(kb_search, query, 5)
+            except Exception:
+                kb_results = []
+            if kb_results:
+                kb_reply = await _generate_kb_chat_reply(query, kb_results)
+                if kb_reply:
+                    reply = kb_reply
             yield _sse("message", {
                 "role": "agent",
                 "conversation_id": conversation_id,

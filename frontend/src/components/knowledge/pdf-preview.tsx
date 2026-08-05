@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
+import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 export function PdfPreview({ docId }: { docId: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -19,10 +20,11 @@ export function PdfPreview({ docId }: { docId: string }) {
     import("pdfjs-dist")
       .then((pdfjsLib: any) => {
         if (cancelled) return;
-        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-        const loadingTask = pdfjsLib.getDocument(
-          `/api/v1/kb/documents/${docId}/file`,
-        );
+        pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+        const loadingTask = pdfjsLib.getDocument({
+          url: `/api/v1/kb/documents/${docId}/file`,
+          withCredentials: true,
+        });
         loadingTask.promise.then(
           (pdf: any) => {
             if (cancelled) return;

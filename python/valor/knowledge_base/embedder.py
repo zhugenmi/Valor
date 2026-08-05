@@ -4,6 +4,11 @@ from __future__ import annotations
 import os
 import threading
 
+# Default to offline mode so sentence-transformers uses local cache instead of
+# hitting huggingface.co on every load (network may be unreachable in dev envs).
+# User can override by exporting HF_HUB_OFFLINE=0 before starting the server.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
 _EMBEDDER: "Embedder | None" = None
 _LOCK = threading.Lock()
 

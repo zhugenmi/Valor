@@ -80,7 +80,7 @@ export default function KnowledgeListPage() {
           <Input
             value={ticker}
             onChange={(e) => setTicker(e.target.value)}
-            placeholder="按 ticker 过滤（如 600519）"
+            placeholder="搜索文档"
             className="pl-8"
           />
         </div>

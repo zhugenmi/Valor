@@ -25,6 +25,8 @@ def chunk_document(parsed: ParsedDocument, strategy: ChunkStrategy) -> list[Chun
         chunks = _chunk_semantic(parsed, strategy, force_fallback=(mode == "semantic_fallback"))
     else:
         chunks = _chunk_fixed(parsed, strategy)
+    # Filter noise chunks (page headers/footers/copyright/disclaimer)
+    chunks = _filter_noise_chunks(chunks)
     # Assign seq + chunk_id
     for i, c in enumerate(chunks):
         c.seq = i
@@ -42,6 +44,9 @@ def _split_recursive(text: str, separators: list[str], chunk_size: int, overlap:
     for i, sep in enumerate(separators):
         if sep in text:
             parts = text.split(sep)
+            # Drop noise parts (page headers/footers/copyright/disclaimer) early
+            # so they don't get embedded into otherwise-valid chunks via overlap.
+            parts = [p for p in parts if p and not _is_noise_chunk(p)]
             chunks: list[str] = []
             current = ""
             for p in parts:
@@ -107,7 +112,13 @@ def _chunk_semantic(parsed: ParsedDocument, strategy: ChunkStrategy,
 
 
 def _chunk_clause(parsed: ParsedDocument, strategy: ChunkStrategy) -> list[Chunk]:
-    """Clause: split by 第X条 pattern."""
+    """Clause: split by 第X条 pattern.
+
+    Long articles are kept whole (chunk_size=5000 fits nearly all regulatory clauses).
+    Truly oversized articles are split by sentence; each sub-chunk repeats the
+    article prefix (e.g. "第三条 ") so each is independently retrievable and
+    the article's context is preserved.
+    """
     pattern = strategy.separators[0] if strategy.separators else r"第[一二三四五六七八九十百千\d]+条"
     parts = re.split(f"({pattern})", parsed.full_text)
     chunks: list[Chunk] = []
@@ -119,8 +130,12 @@ def _chunk_clause(parsed: ParsedDocument, strategy: ChunkStrategy) -> list[Chunk
         if len(text) > strategy.chunk_size:
             sub_parts = _split_recursive(text, ["。", "；"], strategy.chunk_size, 0)
             for sp in sub_parts:
-                chunks.append(Chunk(chunk_id="", doc_id="", seq=0, text=sp,
-                                    page_no=1, token_count=len(sp)))
+                # Each sub-chunk gets the article prefix so it's independently
+                # retrievable by "第X条" queries. First sub-part already starts
+                # with prefix (since text starts with it); others need it prepended.
+                sub_text = sp if sp.startswith(prefix) else f"{prefix} {sp}"
+                chunks.append(Chunk(chunk_id="", doc_id="", seq=0, text=sub_text,
+                                    page_no=1, token_count=len(sub_text)))
         else:
             chunks.append(Chunk(chunk_id="", doc_id="", seq=0, text=text,
                                 page_no=1, token_count=len(text)))
@@ -129,6 +144,39 @@ def _chunk_clause(parsed: ParsedDocument, strategy: ChunkStrategy) -> list[Chunk
         # No clause pattern matched, fallback to fixed
         return _chunk_fixed(parsed, strategy)
     return chunks
+
+
+# Patterns that mark a chunk as noise (page header/footer/copyright/disclaimer).
+# Applied to short chunks only, to avoid false positives on substantive content.
+_NOISE_KEYWORDS = ("版权所有", "未经许可", "不得转载", "免责声明", "请阅读最后")
+# Page number / dash-wrapped marker: "1", "- 1 -", "— 1 —" (em dash), "第 1 页"
+# \W matches any non-word char (incl. em/en dash) but not CJK letters/digits.
+_PAGE_NUMBER_RE = re.compile(r"^[\W\s]*\d+[\W\s]*$")
+_PAGE_LABEL_RE = re.compile(r"^第\s*\d+\s*页\s*$")
+_PAGE_LABEL_RE_EN = re.compile(r"^Page\s+\d+\s*$", re.IGNORECASE)
+
+
+def _is_noise_chunk(text: str) -> bool:
+    """Detect page header/footer/copyright/disclaimer noise chunks.
+
+    Only filters when the *entire* chunk is noise, so substantive chunks that
+    merely mention "版权" inside a longer paragraph are preserved.
+    """
+    s = text.strip()
+    if not s:
+        return True
+    # Pure page numbers / dash-wrapped page markers: "- 1 -", "1", "第 1 页"
+    if _PAGE_NUMBER_RE.match(s) or _PAGE_LABEL_RE.match(s) or _PAGE_LABEL_RE_EN.match(s):
+        return True
+    # Short chunk dominated by copyright/disclaimer keywords
+    if len(s) <= 80 and any(kw in s for kw in _NOISE_KEYWORDS):
+        return True
+    return False
+
+
+def _filter_noise_chunks(chunks: list[Chunk]) -> list[Chunk]:
+    """Drop page-header/footer/copyright noise chunks before indexing."""
+    return [c for c in chunks if not _is_noise_chunk(c.text)]
 
 
 def _chunk_table_aware(parsed: ParsedDocument, strategy: ChunkStrategy) -> list[Chunk]:

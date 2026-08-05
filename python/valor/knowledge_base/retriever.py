@@ -11,12 +11,18 @@ from typing import Any
 
 import jieba
 
-from valor.server.db import KB_AVAILABLE, get_conn
+from valor.server import db
+from valor.server.db import get_conn
 
 VALOR_KB_SIMILARITY_THRESHOLD = float(os.getenv("VALOR_KB_SIMILARITY_THRESHOLD", "0.30"))
 VALOR_KB_BM25_K = int(os.getenv("VALOR_KB_BM25_K", "30"))
 VALOR_KB_VEC_K = int(os.getenv("VALOR_KB_VEC_K", "30"))
 VALOR_KB_RRF_K = int(os.getenv("VALOR_KB_RRF_K", "10"))
+
+# FTS5 query syntax reserves these chars; strip them to avoid "syntax error"
+# when user queries contain punctuation like ?, comma, *, etc.
+# Includes both ASCII and full-width (Chinese) variants.
+_FTS5_SPECIAL_CHARS = '"*:()[]{}^~+-/\\?，？、。；：！!？'
 
 _RERANKER = None
 _RERANKER_LOCK = threading.Lock()
@@ -56,7 +62,7 @@ def retrieve(
     include_obsolete: bool = False,
 ) -> list[ChunkResult]:
     """Main retrieval pipeline. Returns empty list if pre-filter rejects."""
-    if not KB_AVAILABLE:
+    if not db.KB_AVAILABLE:
         return []
 
     # Stage 2: pre-filter (top-1 vector similarity)
@@ -89,6 +95,14 @@ def retrieve(
 
 def _bm25_search(query: str, k: int) -> list[ChunkResult]:
     tokens = " ".join(jieba.cut(query))
+    # Sanitize: keep only CJK chars, alphanumeric, and whitespace.
+    # FTS5 reserves many punctuation chars (, ? " * : etc.) and throws
+    # "syntax error near ..." when user queries contain them.
+    tokens = "".join(
+        c if (c.isalnum() or c.isspace() or "一" <= c <= "鿿") else " "
+        for c in tokens
+    )
+    tokens = " ".join(tokens.split())
     if not tokens.strip():
         return []
     with get_conn() as conn:
@@ -218,8 +232,11 @@ def _rerank(query: str, candidates: list[ChunkResult], top_k: int) -> list[Chunk
     text_map = {r["chunk_id"]: (r["text"], r["page_no"], r["heading_path"], r["doc_id"]) for r in rows}
     pairs = []
     for c in candidates:
-        text = text_map.get(c.chunk_id, ("", None, None, ""))[0]
+        text, page_no, heading_path, doc_id = text_map.get(c.chunk_id, ("", None, None, ""))
         c.text = text
+        c.page_no = page_no
+        c.heading_path = heading_path
+        c.doc_id = doc_id
         pairs.append((query, text))
     reranker = get_reranker()
     scores = reranker.predict(pairs)
