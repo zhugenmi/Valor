@@ -7,6 +7,7 @@ License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any, AsyncIterator
 
 from loguru import logger
@@ -62,31 +63,36 @@ async def run_agent_runtime(
 
     # Stream supervisor events via asyncio.Queue (producer=supervisor task,
     # consumer=this generator). Supervisor runs in background; we yield events
-    # as they arrive for true streaming.
-    import asyncio
-
+    # as they arrive for true streaming. The wrapper puts None into the queue
+    # in a finally block so the consumer breaks out when the Supervisor exits.
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
 
     async def _on_event(evt: dict[str, Any]) -> None:
         await queue.put(evt)
 
-    supervisor_task = asyncio.create_task(run_supervisor(
-        query=query,
-        tools=get_default_tools(),
-        provider=provider,
-        on_event=_on_event,
-        max_iterations=max_iterations,
-        model=model,
-    ))
+    async def _run_supervisor_and_signal() -> Any:
+        try:
+            return await run_supervisor(
+                query=query,
+                tools=get_default_tools(),
+                provider=provider,
+                on_event=_on_event,
+                max_iterations=max_iterations,
+                model=model,
+            )
+        finally:
+            await queue.put(None)
 
-    # Stream supervisor events as they arrive
+    supervisor_task = asyncio.create_task(_run_supervisor_and_signal())
+
+    # Stream supervisor events as they arrive; break when None sentinel is put
     while True:
         evt = await queue.get()
         if evt is None:
             break
         yield evt
 
-    await supervisor_task  # ensure task completed
+    await supervisor_task  # ensure task completed (raises if Supervisor crashed)
     state = supervisor_task.result()
 
     # Generate final answer

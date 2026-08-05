@@ -166,3 +166,38 @@ async def test_supervisor_tool_handler_failure_isolated():
     tool_msgs = [m for m in state.messages if m.role == "tool"]
     assert len(tool_msgs) == 1
     assert "boom" in (tool_msgs[0].content or "")
+
+
+async def test_run_agent_runtime_yields_events_without_deadlock():
+    """run_agent_runtime must terminate (no deadlock) and yield expected events.
+
+    Patches get_llm_provider to return a _FakeProvider that returns no tool_calls
+    on first call (Supervisor exits after 1 iter). Verifies the queue sentinel
+    fix: if None is never put, this test hangs forever.
+    """
+    from valor.runtime.main import run_agent_runtime
+
+    fake_provider = _FakeProvider([
+        ToolCallResponse(content="done", tool_calls=None, finish_reason="stop"),
+    ])
+
+    async def _fake_answer(supervisor_messages, user_query, provider=None):
+        return "mocked final answer"
+
+    with (
+        patch("valor.runtime.main.get_llm_provider", return_value=fake_provider),
+        patch("valor.runtime.main.generate_answer", side_effect=_fake_answer),
+    ):
+        events = []
+        async for evt in run_agent_runtime("hello"):
+            events.append(evt)
+
+    event_types = [e["event"] for e in events]
+    # Must include reasoning_started, message, reasoning_completed, done
+    assert "reasoning_started" in event_types
+    assert "message" in event_types
+    assert "reasoning_completed" in event_types
+    assert "done" in event_types
+    # The message event must contain the final answer
+    msg_evt = next(e for e in events if e["event"] == "message")
+    assert msg_evt["data"]["payload"]["content"] == "mocked final answer"
