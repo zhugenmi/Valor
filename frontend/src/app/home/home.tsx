@@ -63,6 +63,7 @@ function Home() {
       icon: <SvgIcon name={AutoTrade} />,
       description: t("home.suggestions.strategy.description"),
       presetMessage: t("home.suggestions.strategy.preset"),
+      to: "/analysis",
       bgColor: isDark
         ? "bg-gradient-to-r from-[#111827]/80 from-[5.05%] to-[#7C3AED]/30 to-[100%]"
         : "bg-gradient-to-r from-[#FFFFFF]/70 from-[5.05%] to-[#EAE8FF]/70 to-[100%]",
@@ -143,7 +144,9 @@ function Home() {
             suggestions={suggestions.map((suggestion) => ({
               ...suggestion,
               onClick: () =>
-                handleAgentClick(suggestion.id, suggestion.presetMessage),
+                suggestion.to
+                  ? navigate(suggestion.to)
+                  : handleAgentClick(suggestion.id, suggestion.presetMessage),
             }))}
           />
         </section>

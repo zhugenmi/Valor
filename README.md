@@ -168,7 +168,7 @@ uv run python -m valor.cli.main --ticker 600519 --run --portfolio-cash 100000 --
 ```bash
 cd python
 
-# 全部测试（97 tests）
+# 全部测试
 uv run pytest
 
 # 单元测试
@@ -198,7 +198,15 @@ uv run ruff check valor/ tests/
 | `TUSHARE_TOKEN` | Tushare Pro token（可选） | - |
 | `AKSHARE_PROXY_*` | AkShare 代理配置（可选） | - |
 
-## 开发路线
+## 使用
+智能问答
+### 股票诊断
+![alt text](images/stock-diagnosis.png)
+### 知识库管理
+![alt text](images/kb.png)
+
+
+## TODO
 
 | Phase | 内容 | 状态 |
 |---|---|---|
@@ -206,7 +214,7 @@ uv run ruff check valor/ tests/
 | 1B | 12 Agent + LangGraph 工作流 | ✅ 完成 |
 | 1C | FastAPI 服务 + 11 路由（38 端点） | ✅ 完成 |
 | 1D | 前端分析页 + SSE 流式 Agent 事件 | ✅ 完成 |
-| 2 | 持仓管理与资产配置 | 📋 计划 |
+| 2 | 持仓管理与资产配置 | ✅ 完成 |
 | 3 | Agent 驱动回测 | 📋 计划 |
 | 4 | Pro 回测（ML/RL 策略 + 基金/债券数据） | 📋 计划 |
 

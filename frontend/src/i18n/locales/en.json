@@ -371,8 +371,8 @@
         "preset": "Please help me do an in-depth analysis of an A-share stock, e.g. Kweichow Moutai (600519)"
       },
       "strategy": {
-        "title": "Automated Trading",
-        "description": "Multi-strategy smart trading, automatically execute your strategies.",
+        "title": "Stock Diagnosis",
+        "description": "Multi-dimensional stock analysis with buy/sell/hold recommendations.",
         "preset": "Please help me diagnose my portfolio holdings"
       },
       "news": {
