@@ -7,3 +7,7 @@ is wrapped as a Tool; KB retrieval and data adapters are wrapped as Tools.
 
 License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial
 """
+
+from valor.runtime.main import run_agent_runtime
+
+__all__ = ["run_agent_runtime"]
