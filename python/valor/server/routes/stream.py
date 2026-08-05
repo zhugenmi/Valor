@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import math
+import os
 import uuid
 from datetime import UTC, datetime
 from typing import AsyncGenerator
@@ -32,6 +33,8 @@ from valor.server.intent import VALID_AGENTS, classify_intent
 from valor.server.polish import polish_decision
 from valor.server.portfolio_context import load_portfolio_context
 from valor.tools.kb_search import search as kb_search
+
+from valor.runtime import run_agent_runtime
 
 router = APIRouter(prefix="/api/v1", tags=["Stream"])
 
@@ -521,6 +524,56 @@ async def agent_stream(body: dict):
                 "payload": {"content": reply},
             })
             _persist("assistant", "message", reply, msg_id=agent_msg_id)
+            yield _sse("done", {"conversation_id": conversation_id, "thread_id": thread_id})
+            return
+
+        # Phase 3 Agent Runtime path (env-gated; default off to preserve existing behavior)
+        if os.getenv("VALOR_USE_AGENT_RUNTIME", "0") == "1":
+            async for evt in run_agent_runtime(query):
+                event_type = evt.get("event")
+                event_data = evt.get("data", {})
+                # Forward runtime events as SSE; tag non-standard events
+                if event_type == "message":
+                    # Final answer from Runtime - use the existing agent_msg_id
+                    yield _sse("message", {
+                        "role": "agent",
+                        "conversation_id": conversation_id,
+                        "thread_id": thread_id,
+                        "task_id": "",
+                        "item_id": agent_msg_id,
+                        "metadata": {},
+                        "payload": event_data.get("payload", {"content": ""}),
+                    })
+                    _persist("assistant", "message",
+                             event_data.get("payload", {}).get("content", ""),
+                             msg_id=agent_msg_id)
+                elif event_type == "system_failed":
+                    yield _sse("system_failed", {
+                        "role": "system",
+                        "conversation_id": conversation_id,
+                        "thread_id": thread_id,
+                        "task_id": "",
+                        "item_id": "",
+                        "metadata": {},
+                        "payload": {"content": f"分析失败: {event_data.get('error', '')}"},
+                    })
+                    _persist("system", "system_failed",
+                             json.dumps({"error": event_data.get("error", "")},
+                                        ensure_ascii=False))
+                    update_conversation_status(conversation_id, "failed")
+                elif event_type == "done":
+                    update_conversation_status(conversation_id, "completed")
+                else:
+                    # tool_call / tool_result / reasoning_started /
+                    # reasoning_completed / max_iterations_reached - forward as-is
+                    yield _sse(event_type or "runtime_event", {
+                        "conversation_id": conversation_id,
+                        "thread_id": thread_id,
+                        **event_data,
+                    })
+                    _persist("system", event_type or "runtime_event",
+                             json.dumps(event_data, ensure_ascii=False,
+                                        default=_json_default))
             yield _sse("done", {"conversation_id": conversation_id, "thread_id": thread_id})
             return
 
