@@ -27,11 +27,11 @@ def test_search_result_item_with_chunks():
 
 
 def test_document_list_item_from_doc():
-    from datetime import datetime
+    from datetime import UTC, datetime
     from valor.knowledge_base.models import KBDoc
     doc = KBDoc(doc_id="d1", title="t", category="research", sub_type="公司研究",
                 mime_type="application/pdf", file_path="x", sha256="abc",
-                uploaded_at=datetime.utcnow().isoformat())
+                uploaded_at=datetime.now(UTC).replace(tzinfo=None).isoformat())
     item = DocumentListItem.model_validate(doc.model_dump())
     assert item.doc_id == "d1"
 

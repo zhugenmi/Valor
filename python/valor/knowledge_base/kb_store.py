@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from valor.knowledge_base.models import Chunk, CorrectionItem, KBDoc
@@ -202,7 +202,7 @@ def insert_correction(
                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (correction_id, ticker, report_period, field_name, original_value,
              corrected_value, unit, source_doc_id, source_page,
-             datetime.utcnow().isoformat(), reason),
+             datetime.now(UTC).replace(tzinfo=None).isoformat(), reason),
         )
     return correction_id
 

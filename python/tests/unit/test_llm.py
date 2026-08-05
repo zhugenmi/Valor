@@ -1,4 +1,4 @@
-"""Unit tests for LLM retry logic in openrouter_config.
+"""Tests for LLM router priority/fallback and retry logic.
 
 License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial
 """
@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
+from valor.adapters.llm import get_llm_provider
 from valor.tools.openrouter_config import get_chat_completion
 
 
@@ -15,6 +16,25 @@ def _fake_provider_with_side_effect(side_effect):
     provider = AsyncMock()
     provider.chat.side_effect = side_effect
     return provider
+
+
+def test_router_returns_first_available_provider():
+    with patch.dict(
+        "os.environ",
+        {
+            "VALOR_LLM_PROVIDER": "openai",
+            "VALOR_OPENAI_API_KEY": "sk-test",
+            "VALOR_OPENAI_BASE_URL": "https://api.test.com/v1",
+        },
+    ):
+        provider = get_llm_provider()
+        assert provider is not None
+
+
+def test_router_raises_when_provider_not_registered(monkeypatch):
+    monkeypatch.setenv("VALOR_LLM_PROVIDER", "nonexistent_provider")
+    with pytest.raises(RuntimeError, match="no LLM provider"):
+        get_llm_provider()
 
 
 def test_retry_on_read_timeout_then_success():

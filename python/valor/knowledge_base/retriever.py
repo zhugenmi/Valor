@@ -6,7 +6,7 @@ import math
 import os
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import jieba
@@ -76,7 +76,7 @@ def retrieve(
     fused = _rrf(bm25_hits, vec_hits, k=VALOR_KB_RRF_K)
 
     # Time decay + vintage filter
-    now = datetime.utcnow()
+    now = datetime.now(UTC).replace(tzinfo=None)
     fused = _apply_time_decay(fused, now)
     fused = _filter_vintage(fused, vintage_filter, include_obsolete, now)
 

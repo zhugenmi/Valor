@@ -1,9 +1,12 @@
-"""Tests for core protocol Pydantic models."""
+"""Tests for core protocol Pydantic models.
+
+License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial
+"""
 
 import pytest
 from pydantic import ValidationError
 
-from valor.core.protocols import Action, Message, Signal
+from valor.core.protocols import Action, Citation, Message, Signal
 
 
 def test_signal_valid_bullish():
@@ -53,3 +56,24 @@ def test_message_round_trip():
     msg = Message(role="user", content="Analyze 600519")
     assert msg.role == "user"
     assert msg.content == "Analyze 600519"
+
+
+def test_signal_citations_default_empty():
+    s = Signal(agent="test", signal="bullish", confidence=0.8, reasoning="x")
+    assert s.citations == []
+
+
+def test_signal_with_citations():
+    c = Citation(chunk_id="c1", doc_id="d1", doc_title="研报",
+                 publish_date="2024-10-28", vintage="current", cited_text="原文片段")
+    s = Signal(agent="test", signal="bullish", confidence=0.8, reasoning="x", citations=[c])
+    assert len(s.citations) == 1
+    assert s.citations[0].chunk_id == "c1"
+
+
+def test_citation_serialization():
+    c = Citation(chunk_id="c1", doc_id="d1", doc_title="t",
+                 publish_date="2024-01-01", vintage="current", cited_text="x", page_no=3)
+    d = c.model_dump()
+    assert d["page_no"] == 3
+    assert d["vintage"] == "current"

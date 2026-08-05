@@ -1,5 +1,5 @@
 """Tests for indexer. License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial."""
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -30,7 +30,7 @@ def test_index_document_writes_chunks_and_vectors(fresh_db):
         mime_type="text/plain",
         file_path="x",
         sha256="abc",
-        uploaded_at=datetime.utcnow().isoformat(),
+        uploaded_at=datetime.now(UTC).replace(tzinfo=None).isoformat(),
     )
     insert_document(doc)
     parsed = ParsedDocument(
@@ -69,7 +69,7 @@ def test_index_document_marks_embed_failed_gracefully(fresh_db, monkeypatch):
         mime_type="text/plain",
         file_path="x",
         sha256="def",
-        uploaded_at=datetime.utcnow().isoformat(),
+        uploaded_at=datetime.now(UTC).replace(tzinfo=None).isoformat(),
     )
     insert_document(doc)
     parsed = ParsedDocument(

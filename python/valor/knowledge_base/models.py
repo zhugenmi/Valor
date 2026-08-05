@@ -1,7 +1,7 @@
 """Pydantic schemas for knowledge base. License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -38,7 +38,7 @@ class Chunk(BaseModel):
     heading_path: str | None = None
     token_count: int | None = None
     embed_failed: bool = False
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None).isoformat())
 
 
 class Citation(BaseModel):

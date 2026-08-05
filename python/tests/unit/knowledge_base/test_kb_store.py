@@ -1,5 +1,5 @@
 """Tests for kb_store. License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial."""
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -39,7 +39,7 @@ def sample_doc():
         mime_type="application/pdf",
         file_path="data/kb_files/d1/test.pdf",
         sha256="abc123",
-        uploaded_at=datetime.utcnow().isoformat(),
+        uploaded_at=datetime.now(UTC).replace(tzinfo=None).isoformat(),
         status="indexing",
     )
 

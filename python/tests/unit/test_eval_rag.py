@@ -12,7 +12,7 @@ import pytest
 # Apply ragas compat shim before any ragas imports
 sys.modules.setdefault("langchain_community.chat_models.vertexai", MagicMock())
 
-from valor.knowledge_base.eval_rag import (
+from valor.knowledge_base.eval_rag import (  # noqa: E402
     BgeEmbeddings,
     rule_context_metrics,
     generate_answer,

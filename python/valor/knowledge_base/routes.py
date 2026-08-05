@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, UploadFile
@@ -172,7 +172,7 @@ async def upload_document(
     report_period = extract_report_period(parsed) if category == "disclosure" else None
 
     # Persist document row
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(UTC).replace(tzinfo=None).isoformat()
     meta = {"report_period": report_period, "enable_correction": enable_correction}
     doc = KBDoc(
         doc_id=doc_id, title=title, category=category, sub_type=sub_type,
@@ -201,7 +201,7 @@ async def list_docs(
     limit: int = 50, offset: int = 0,
 ):
     items, total = list_documents(category, sub_type, ticker, limit, offset)
-    now = datetime.utcnow()
+    now = datetime.now(UTC).replace(tzinfo=None)
     out = []
     for doc in items:
         item = DocumentListItem.model_validate(doc.model_dump())
@@ -216,7 +216,7 @@ async def get_doc_detail(doc_id: str):
     if doc is None:
         return fail(404, "document not found")
     item = DocumentListItem.model_validate(doc.model_dump())
-    item.vintage = _compute_vintage(doc, datetime.utcnow())
+    item.vintage = _compute_vintage(doc, datetime.now(UTC).replace(tzinfo=None))
     return ok(item.model_dump())
 
 

@@ -1,8 +1,15 @@
-"""Unit tests for industry cluster configuration."""
+"""Unit tests for industry cluster configuration, stock cluster map, and resolver.
+
+License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial
+"""
+import pytest
+
+from valor.strategy.cluster_resolver import resolve, resolve_stock
 from valor.strategy.industry_clusters import (
     INDUSTRY_CLUSTERS,
     INDUSTRY_TO_CLUSTER,
 )
+from valor.strategy.stock_cluster_map import STOCK_CLUSTER_MAP, lookup_stock_cluster
 
 
 # ---------------------------------------------------------------------------
@@ -223,3 +230,156 @@ def test_industry_to_cluster_correct_mapping():
     assert INDUSTRY_TO_CLUSTER["电子"] == "tmt"
     assert INDUSTRY_TO_CLUSTER["公用事业"] == "utility_transport"
     assert INDUSTRY_TO_CLUSTER["综合"] == "conglomerate"
+
+
+# ---------------------------------------------------------------------------
+# stock_cluster_map static mapping
+# ---------------------------------------------------------------------------
+
+def test_three_telecom_carriers_mapped_to_utility_transport():
+    """三大运营商必须归公用事业，不归 TMT。
+
+    业务定性：类债券+高股息+现金流稳定，而非高成长科技股。
+    """
+    for code, name in [("601728", "中国电信"), ("600050", "中国联通"), ("600941", "中国移动")]:
+        result = lookup_stock_cluster(code)
+        assert result is not None
+        label, cluster = result
+        assert cluster == "utility_transport", f"{name} {code} -> {cluster}"
+        assert label == "通信运营"
+
+
+def test_lookup_returns_none_for_unknown_symbol():
+    assert lookup_stock_cluster("999999") is None
+
+
+def test_lookup_returns_none_for_empty():
+    assert lookup_stock_cluster("") is None
+
+
+def test_lookup_strips_whitespace():
+    result = lookup_stock_cluster("  601728  ")
+    assert result is not None
+    assert result[1] == "utility_transport"
+
+
+def test_map_covers_at_least_300_stocks():
+    """静态表应覆盖沪深300+主要成分股，至少 300 条。"""
+    assert len(STOCK_CLUSTER_MAP) >= 300
+
+
+def test_map_covers_all_10_clusters():
+    """10 个集群都应有至少 1 个代表。"""
+    clusters = {c for _, c in STOCK_CLUSTER_MAP.values()}
+    expected = {
+        "financial", "real_estate", "cyclical_resource", "manufacturing",
+        "consumer_staples", "consumer_discretionary", "pharma", "tmt",
+        "utility_transport", "conglomerate",
+    }
+    assert clusters == expected
+
+
+def test_bank_stocks_map_to_financial():
+    """招商银行 600036 -> financial."""
+    result = lookup_stock_cluster("600036")
+    assert result is not None
+    assert result[1] == "financial"
+
+
+def test_maotai_maps_to_consumer_staples():
+    """贵州茅台 600519 -> consumer_staples."""
+    result = lookup_stock_cluster("600519")
+    assert result is not None
+    assert result[1] == "consumer_staples"
+
+
+def test_haier_maps_to_consumer_discretionary():
+    """海尔智家 600690 归消费可选/家电，不归制造（去重决策）."""
+    result = lookup_stock_cluster("600690")
+    assert result is not None
+    assert result[1] == "consumer_discretionary"
+
+
+def test_aimeike_maps_to_pharma():
+    """爱美客 300896 归医药/医美，不归美容护理（去重决策）."""
+    result = lookup_stock_cluster("300896")
+    assert result is not None
+    assert result[1] == "pharma"
+
+
+def test_yiyi_lithium_maps_to_manufacturing():
+    """亿纬锂能 300014 归制造/电力设备，不归 TMT（去重决策）."""
+    result = lookup_stock_cluster("300014")
+    assert result is not None
+    assert result[1] == "manufacturing"
+
+
+# ---------------------------------------------------------------------------
+# cluster_resolver.resolve() and resolve_stock()
+# ---------------------------------------------------------------------------
+
+def test_known_industry_returns_correct_cluster():
+    assert resolve("综合") == "conglomerate"
+
+
+def test_unknown_industry_returns_conglomerate():
+    assert resolve("某不存在的行业") == "conglomerate"
+
+
+def test_none_returns_conglomerate():
+    assert resolve(None) == "conglomerate"
+
+
+def test_empty_string_returns_conglomerate():
+    assert resolve("") == "conglomerate"
+
+
+def test_whitespace_only_returns_conglomerate():
+    assert resolve("   ") == "conglomerate"
+
+
+def test_industry_with_whitespace_stripped():
+    assert resolve("  综合  ") == "conglomerate"
+
+
+def test_resolve_stock_local_hit_returns_static_entry():
+    """本地映射表命中的股票不查远程，直接返回 (label, cluster)."""
+    industry, cluster = resolve_stock("601728")
+    assert industry == "通信运营"
+    assert cluster == "utility_transport"
+
+
+def test_resolve_stock_local_hit_for_bank():
+    industry, cluster = resolve_stock("600036")
+    assert cluster == "financial"
+    assert industry == "股份制银行"
+
+
+def test_resolve_stock_remote_fallback(monkeypatch: pytest.MonkeyPatch):
+    """本地未命中时走远程 stock_individual_info_em，结果经 INDUSTRY_TO_CLUSTER 映射。"""
+    from valor.strategy import cluster_resolver as cr
+
+    monkeypatch.setattr(cr, "_fetch_industry_remote", lambda s: "银行")
+    industry, cluster = resolve_stock("999999")
+    assert industry == "银行"
+    assert cluster == "financial"
+
+
+def test_resolve_stock_remote_fallback_unknown_industry(monkeypatch: pytest.MonkeyPatch):
+    """远程返回的行业名不在 INDUSTRY_TO_CLUSTER -> conglomerate."""
+    from valor.strategy import cluster_resolver as cr
+
+    monkeypatch.setattr(cr, "_fetch_industry_remote", lambda s: "某新行业")
+    industry, cluster = resolve_stock("999999")
+    assert industry == "某新行业"
+    assert cluster == "conglomerate"
+
+
+def test_resolve_stock_all_fail_returns_conglomerate(monkeypatch: pytest.MonkeyPatch):
+    """本地未命中 + 远程失败 -> (None, conglomerate)."""
+    from valor.strategy import cluster_resolver as cr
+
+    monkeypatch.setattr(cr, "_fetch_industry_remote", lambda s: None)
+    industry, cluster = resolve_stock("999999")
+    assert industry is None
+    assert cluster == "conglomerate"

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Iterable
 
 from valor.knowledge_base.constants import ChunkStrategy
@@ -33,7 +33,7 @@ def chunk_document(parsed: ParsedDocument, strategy: ChunkStrategy) -> list[Chun
         if not c.chunk_id:
             c.chunk_id = str(uuid.uuid4())
         if not c.created_at:
-            c.created_at = datetime.utcnow().isoformat()
+            c.created_at = datetime.now(UTC).replace(tzinfo=None).isoformat()
     return chunks
 
 

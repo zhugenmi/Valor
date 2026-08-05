@@ -1,5 +1,5 @@
 """Tests for retriever. License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial."""
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -16,7 +16,7 @@ def kb_with_docs(tmp_path, monkeypatch):
     dbmod.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     init_db()
     # Insert two docs
-    now = datetime.utcnow()
+    now = datetime.now(UTC).replace(tzinfo=None)
     for i, (title, text) in enumerate([
         ("茅台业绩点评", "贵州茅台 2024Q3 营收增长 15%，净利润上升"),
         ("行业策略报告", "白酒行业整体复苏，高端白酒估值回落"),
