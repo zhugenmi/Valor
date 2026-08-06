@@ -263,3 +263,63 @@ def test_chunk_clause_no_second_split_when_under_size():
     article1_chunks = [c for c in chunks if "第一条" in c.text]
     assert len(article1_chunks) == 1, \
         f"第一条(4800字 < chunk_size)应单 chunk, 实际 {len(article1_chunks)} 块"
+
+
+# ---------------------------------------------------------------------------
+# Bug fix: 表格 chunk 增加 caption (q12-q16 失败案例)
+# ---------------------------------------------------------------------------
+
+def test_chunk_table_includes_caption_from_heading():
+    """表格 chunk 应在文本开头包含就近 heading 作为 caption。"""
+    text = "## 主要财务数据\n\n营业收入情况如下:\n\n| 项目 | 金额 |\n|---|---|\n| 营业收入 | 168838102514.79 |\n\n后续文本。"
+    doc = ParsedDocument(
+        file_path="x", mime_type="text/markdown",
+        pages=[ParsedPage(page_no=1, text=text)],
+        full_text=text,
+        heading_tree=[HeadingNode(level=2, text="主要财务数据", page_no=1)],
+        tables=[ParsedTable(page_no=1, rows=[["项目", "金额"], ["营业收入", "168838102514.79"]],
+                            caption="主要财务数据")],
+    )
+    chunks = chunk_document(doc, CHUNK_STRATEGIES["annual_report"])
+    table_chunks = [c for c in chunks if "|" in c.text and "营业收入" in c.text]
+    assert table_chunks, "应有表格 chunk"
+    # 表格 chunk 应包含 caption(就近 heading "主要财务数据")
+    assert any("主要财务数据" in c.text for c in table_chunks), \
+        f"表格 chunk 缺少 caption: {[c.text[:60] for c in table_chunks]!r}"
+
+
+def test_chunk_table_caption_falls_back_to_column_names():
+    """无 caption 时,表格 chunk caption 用列名摘要(如"项目 金额 同比")。"""
+    text = "概述文本。\n\n| 项目 | 金额 | 同比 |\n|---|---|---|\n| 营收 | 100 | 5% |\n\n后续。"
+    doc = ParsedDocument(
+        file_path="x", mime_type="text/plain",
+        pages=[ParsedPage(page_no=1, text=text)],
+        full_text=text,
+        tables=[ParsedTable(page_no=1, rows=[["项目", "金额", "同比"], ["营收", "100", "5%"]])],
+    )
+    chunks = chunk_document(doc, CHUNK_STRATEGIES["annual_report"])
+    table_chunks = [c for c in chunks if "|" in c.text and "营收" in c.text]
+    assert table_chunks, "应有表格 chunk"
+    # caption 应回退为列名(表头行)
+    first_chunk_text = table_chunks[0].text
+    # 列名应出现在 caption 中(前 100 字内)
+    assert "项目" in first_chunk_text[:100] and "金额" in first_chunk_text[:100], \
+        f"表格 chunk 缺少列名 caption: {first_chunk_text[:100]!r}"
+
+
+def test_chunk_table_caption_format():
+    """表格 chunk 文本应以 '【表格: ...】' 开头。"""
+    text = "## 财务摘要\n\n| 项目 | 金额 |\n|---|---|\n| 营收 | 100 |"
+    doc = ParsedDocument(
+        file_path="x", mime_type="text/markdown",
+        pages=[ParsedPage(page_no=1, text=text)],
+        full_text=text,
+        heading_tree=[HeadingNode(level=2, text="财务摘要", page_no=1)],
+        tables=[ParsedTable(page_no=1, rows=[["项目", "金额"], ["营收", "100"]],
+                            caption="财务摘要")],
+    )
+    chunks = chunk_document(doc, CHUNK_STRATEGIES["annual_report"])
+    table_chunks = [c for c in chunks if "财务摘要" in c.text and "|" in c.text]
+    assert table_chunks, "应有表格 chunk"
+    assert table_chunks[0].text.startswith("【表格:"), \
+        f"表格 chunk 应以 '【表格:' 开头: {table_chunks[0].text[:50]!r}"

@@ -242,7 +242,7 @@ def _chunk_table_aware(parsed: ParsedDocument, strategy: ChunkStrategy) -> list[
             for i in range(0, len(rows), 20):
                 batch = rows[i:i+20]
                 batch_md = _table_to_markdown(tbl.__class__(
-                    page_no=tbl.page_no, rows=[header] + batch))
+                    page_no=tbl.page_no, rows=[header] + batch, caption=tbl.caption))
                 chunks.append(Chunk(chunk_id="", doc_id="", seq=0, text=batch_md,
                                     page_no=tbl.page_no, heading_path="[表格]",
                                     token_count=len(batch_md)))
@@ -305,11 +305,30 @@ def _split_text_by_headings(text: str, headings: list[HeadingNode]) -> list[tupl
     return sections
 
 
+def _table_caption(tbl: ParsedTable) -> str:
+    """Build a caption for a table chunk.
+
+    Priority:
+    1. tbl.caption (nearest heading from parser)
+    2. Column names from first row (e.g., "项目 金额 同比")
+    3. Fallback: "表格" (no context available)
+    """
+    if tbl.caption and tbl.caption.strip():
+        return tbl.caption.strip()
+    if tbl.rows:
+        header_cells = [str(c).strip() for c in tbl.rows[0] if str(c).strip()]
+        if header_cells:
+            return " ".join(header_cells[:5])  # cap at 5 columns
+    return "表格"
+
+
 def _table_to_markdown(tbl: ParsedTable) -> str:
-    """Convert table to markdown syntax."""
+    """Convert table to markdown syntax with caption prefix."""
     if not tbl.rows:
         return ""
     lines = []
+    caption = _table_caption(tbl)
+    lines.append(f"【表格: {caption}】")
     for i, row in enumerate(tbl.rows):
         cells = [str(c).replace("|", "\\|").replace("\n", " ") for c in row]
         lines.append("| " + " | ".join(cells) + " |")
