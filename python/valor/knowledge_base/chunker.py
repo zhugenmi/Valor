@@ -114,10 +114,13 @@ def _chunk_semantic(parsed: ParsedDocument, strategy: ChunkStrategy,
 def _chunk_clause(parsed: ParsedDocument, strategy: ChunkStrategy) -> list[Chunk]:
     """Clause: split by 第X条 pattern.
 
-    Long articles are kept whole (chunk_size=5000 fits nearly all regulatory clauses).
-    Truly oversized articles are split by sentence; each sub-chunk repeats the
-    article prefix (e.g. "第三条 ") so each is independently retrievable and
-    the article's context is preserved.
+    Long articles are kept whole. Each article's full text is placed in a single
+    chunk regardless of chunk_size when it is under 4x chunk_size (regulatory
+    clauses rarely exceed 8000 chars; q02 case: 106-char article was being
+    fragmented by _split_recursive despite fitting easily).
+
+    Truly oversized articles (>4x chunk_size) are split by sentence; each
+    sub-chunk repeats the article prefix so each is independently retrievable.
     """
     pattern = strategy.separators[0] if strategy.separators else r"第[一二三四五六七八九十百千\d]+条"
     parts = re.split(f"({pattern})", parsed.full_text)
@@ -127,7 +130,10 @@ def _chunk_clause(parsed: ParsedDocument, strategy: ChunkStrategy) -> list[Chunk
         prefix = parts[i]
         body = parts[i+1] if i+1 < len(parts) else ""
         text = prefix + body
-        if len(text) > strategy.chunk_size:
+        # Only split if article is extremely long (>4x chunk_size).
+        # Regulatory clauses typically < 2000 chars; chunk_size=8000 covers them.
+        # This prevents _split_recursive from fragmenting normal-length articles.
+        if len(text) > strategy.chunk_size * 4:
             sub_parts = _split_recursive(text, ["。", "；"], strategy.chunk_size, 0)
             for sp in sub_parts:
                 # Each sub-chunk gets the article prefix so it's independently

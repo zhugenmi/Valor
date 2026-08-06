@@ -97,8 +97,8 @@ def test_chunk_clause_long_article_not_split():
 
 
 def test_chunk_clause_oversized_article_keeps_prefix():
-    """极端长条款(>5000 字)切分时,每个子块都应带'第X条'前缀。"""
-    article_body = "具体内容。" * 1200  # ~6000 字,超过 chunk_size=5000
+    """极端长条款(>32k 字)切分时,每个子块都应带'第X条'前缀。"""
+    article_body = "具体内容。" * 8000  # ~40000 字,超过 chunk_size*4=32000
     text = "第一条 " + article_body
     doc = _doc_with_text(text)
     chunks = chunk_document(doc, CHUNK_STRATEGIES["regulatory_clause"])
@@ -214,3 +214,52 @@ def test_chunk_filter_dedups_exact_duplicates():
     # 不应有两个完全相同的 chunk
     texts = [c.text for c in chunks]
     assert len(texts) == len(set(texts)), f"存在完全相同的重复 chunk: {texts!r}"
+
+
+# ---------------------------------------------------------------------------
+# Bug fix: _chunk_clause 切碎条款 (q02 失败案例) — 加固测试
+# ---------------------------------------------------------------------------
+
+def test_chunk_clause_q02_anti_money_laundering_article3():
+    """q02 案例:反洗钱特别预防措施第三条应保持完整单 chunk。
+
+    GT 答案约 106 字,chunk_size 完全可以容纳,不应触发 _split_recursive。
+    """
+    # 模拟反洗钱办法第三条完整文本(基于 q02 GT 答案)
+    article3 = (
+        "第三条 本办法所称反洗钱特别预防措施,包括立即停止向名单所列对象及其代理人、"
+        "受其指使的组织和人员、其直接或者间接控制的组织提供金融等服务或者资金、资产,"
+        "立即限制相关资金、资产转移等。采取预防措施不得事先通知相关组织和人员。"
+    )
+    text = (
+        "第一条 为规范金融机构反洗钱特别预防措施,制定本办法。\n"
+        "第二条 本办法适用于中华人民共和国境内依法设立的金融机构。\n"
+        + article3 + "\n"
+        "第四条 中国人民银行是反洗钱特别预防措施的监督管理部门。\n"
+        "第五条 本办法自发布之日起施行。"
+    )
+    doc = _doc_with_text(text)
+    chunks = chunk_document(doc, CHUNK_STRATEGIES["regulatory_clause"])
+    # 第三条应单独成块
+    article3_chunks = [c for c in chunks if "第三条" in c.text]
+    assert len(article3_chunks) == 1, \
+        f"第三条应单独成块,实际被切成 {len(article3_chunks)} 块: {[c.text[:40] for c in article3_chunks]}"
+    # 第三条完整内容应在单 chunk 内(含"事先通知"这个末尾独特标记)
+    assert "事先通知" in article3_chunks[0].text, \
+        f"第三条被切碎,末尾内容不在 chunk 中: {article3_chunks[0].text!r}"
+    # chunk 长度应约等于第三条原文长度(180 字左右),不应被切到 30 字
+    assert len(article3_chunks[0].text) > 100, \
+        f"第三条 chunk 异常短: {len(article3_chunks[0].text)} 字, 期望 > 100"
+
+
+def test_chunk_clause_no_second_split_when_under_size():
+    """条款长度 < chunk_size 时,_split_recursive 不应被调用。"""
+    # 构造一个刚好低于 chunk_size 的条款(4800 字)
+    article_body = "具体措施描述内容。" * 280  # ~4800 字
+    text = "第一条 " + article_body + "\n第二条 短条款。"
+    doc = _doc_with_text(text)
+    chunks = chunk_document(doc, CHUNK_STRATEGIES["regulatory_clause"])
+    # 第一条应保持单 chunk(未被 _split_recursive 切碎)
+    article1_chunks = [c for c in chunks if "第一条" in c.text]
+    assert len(article1_chunks) == 1, \
+        f"第一条(4800字 < chunk_size)应单 chunk, 实际 {len(article1_chunks)} 块"

@@ -68,7 +68,7 @@ CHUNK_STRATEGIES: dict[str, ChunkStrategy] = {
         table_mode="row_split",
     ),
     "regulatory_clause": ChunkStrategy(
-        name="regulatory_clause", chunk_size=5000, overlap=0,
+        name="regulatory_clause", chunk_size=8000, overlap=0,
         split_mode="clause",
         separators=[r"第[一二三四五六七八九十百千\d]+条"],
         table_mode="keep_whole",
