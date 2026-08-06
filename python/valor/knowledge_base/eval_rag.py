@@ -50,7 +50,10 @@ from langchain_core.embeddings import Embeddings  # noqa: E402
 from valor.knowledge_base.embedder import get_embedder  # noqa: E402
 from valor.knowledge_base.retriever import retrieve  # noqa: E402
 
-METRICS = ["faithfulness", "answer_relevancy", "context_precision", "context_recall"]
+# answer_relevancy omitted: requires n=3 generations which 火山方舟 endpoint
+# silently ignores (returns 1), and it's the slowest metric (generates +
+# embeds 3 queries per sample). Re-enable when switching to a n-compliant API.
+METRICS = ["faithfulness", "context_precision", "context_recall"]
 
 
 class BgeEmbeddings(Embeddings):
@@ -129,15 +132,17 @@ async def run_eval(dataset_path: str, output_path: str, no_llm: bool = False) ->
             openai_api_key=os.getenv("VALOR_OPENAI_API_KEY", ""),
             openai_api_base=os.getenv("VALOR_OPENAI_BASE_URL", ""),
             temperature=0,
-            max_tokens=1024,
+            max_tokens=100000,
+            request_timeout=360,
         )
 
     # Build per-query results
+    eval_top_k = int(os.getenv("VALOR_KB_EVAL_TOP_K", "10"))
     samples = []
     for i, q in enumerate(queries):
         t0 = time.time()
         try:
-            results = retrieve(q["query"], top_k=5)
+            results = retrieve(q["query"], top_k=eval_top_k)
         except Exception as exc:
             print(f"  [{i+1}/{len(queries)}] retrieve FAILED: {exc}")
             results = []
@@ -176,10 +181,27 @@ async def run_eval(dataset_path: str, output_path: str, no_llm: bool = False) ->
             "rule_context_precision": round(rule_p, 4),
             "rule_context_recall": round(rule_r, 4),
         })
-        status = f"rule_p={rule_p:.2f} rule_r={rule_r:.2f} lat={latency_ms:.0f}ms"
+
+        # Verbose per-query breakdown: query / retrieved / GT / miss
+        short = lambda cid: cid[:8]
+        gt_set = set(q["ground_truth_chunk_ids"])
+        ret_set = set(retrieved_ids)
+        miss = gt_set - ret_set
+        print(f"  [{i+1}/{len(queries)}] {q['id']} rule_p={rule_p:.2f} rule_r={rule_r:.2f} lat={latency_ms:.0f}ms")
+        print(f"    Q: {q['query']}")
+        if results:
+            for r in results:
+                mark = "*" if r.chunk_id in gt_set else " "
+                hp = r.heading_path or "-"
+                print(f"    {mark} [{short(r.chunk_id)}] {r.doc_title} §{hp}")
+        else:
+            print("    (no results)")
+        gt_str = ", ".join(f"[{short(c)}]" for c in q["ground_truth_chunk_ids"])
+        print(f"    GT: {gt_str}")
+        if miss:
+            print(f"    MISS: {', '.join(short(c) for c in miss)}")
         if not no_llm:
-            status += f" ans_len={len(answer)}"
-        print(f"  [{i+1}/{len(queries)}] {q['id']} {status}")
+            print(f"    ans_len={len(answer)}")
 
     # Run ragas if LLM enabled and we have answers
     ragas_results = None
@@ -190,7 +212,7 @@ async def run_eval(dataset_path: str, output_path: str, no_llm: bool = False) ->
             from ragas import evaluate
             from ragas.dataset_schema import EvaluationDataset, SingleTurnSample
             from ragas.metrics import context_precision, context_recall, faithfulness
-            from ragas.metrics._answer_relevance import answer_relevancy
+            from ragas.run_config import RunConfig
 
             ragas_samples = [
                 SingleTurnSample(
@@ -207,9 +229,10 @@ async def run_eval(dataset_path: str, output_path: str, no_llm: bool = False) ->
 
             result = evaluate(
                 dataset=eval_dataset,
-                metrics=[faithfulness, answer_relevancy, context_precision, context_recall],
+                metrics=[faithfulness, context_precision, context_recall],
                 llm=llm,
                 embeddings=embeddings,
+                run_config=RunConfig(max_workers=4, timeout=240),
                 show_progress=True,
                 raise_exceptions=False,
             )

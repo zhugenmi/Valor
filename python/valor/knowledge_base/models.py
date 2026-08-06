@@ -127,10 +127,13 @@ class CategoryDict(BaseModel):
             SubType(name="投资策略", display_name="投资策略报告"),
         ]),
         CategoryInfo(category="disclosure", display_name="企业融资与披露文档", sub_types=[
-            SubType(name="招股说明书", display_name="招股说明书"),
-            SubType(name="募集说明书", display_name="募集说明书"),
             SubType(name="annual_report", display_name="年度报告"),
             SubType(name="quarterly_report", display_name="季度报告"),
+            SubType(name="招股说明书", display_name="招股说明书"),
+            SubType(name="法律意见书", display_name="法律意见书"),
+            SubType(name="募集说明书", display_name="募集说明书"),
+            SubType(name="基金合同", display_name="基金合同"),
+            SubType(name="托管协议", display_name="托管协议"),
         ]),
         CategoryInfo(category="general", display_name="金融行业通用文书", sub_types=[
             SubType(name="行政文书", display_name="行政文书"),

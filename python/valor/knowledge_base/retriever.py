@@ -20,11 +20,24 @@ VALOR_KB_RRF_W_BM25 = float(os.getenv("VALOR_KB_RRF_W_BM25", "0.3"))
 VALOR_KB_RRF_W_VEC = float(os.getenv("VALOR_KB_RRF_W_VEC", "0.7"))
 VALOR_KB_MULTI_QUERY = os.getenv("VALOR_KB_MULTI_QUERY", "1") == "1"
 VALOR_KB_MULTI_QUERY_N = int(os.getenv("VALOR_KB_MULTI_QUERY_N", "3"))
+# Skip cross-encoder rerank (use RRF order directly). Diagnostic knob: rerank
+# can push relevant chunks past top_k when the cross-encoder mis-scores table
+# or long-form chunks. Set to 1 to measure RRF recall ceiling.
+VALOR_KB_SKIP_RERANK = os.getenv("VALOR_KB_SKIP_RERANK", "0") == "1"
 
 # FTS5 query syntax reserves these chars; strip them to avoid "syntax error"
 # when user queries contain punctuation like ?, comma, *, etc.
 # Includes both ASCII and full-width (Chinese) variants.
 _FTS5_SPECIAL_CHARS = '"*:()[]{}^~+-/\\?，？、。；：！!？'
+
+# Chinese stopwords + question words. FTS5 default AND semantics means a single
+# missing stopword ("的/是/什么") zeroes out the entire match. Filter them out
+# so the query becomes about content words only.
+_BM25_STOPWORDS = frozenset(
+    "的 是 了 在 和 也 与 及 或 但 而 什么 怎么 哪 哪些 多少 如何 是什么 "
+    "吗 呢 啊 呀 把 被 让 给 对 从 向 由 为 为了 到 往 上 下 里 外 中 间 "
+    "前 后 这 那 这个 那个 这些 那些 一 一个 一些 每 各".split()
+)
 
 _RERANKER = None
 _RERANKER_LOCK = threading.Lock()
@@ -91,13 +104,15 @@ def retrieve(
     fused = _apply_time_decay(fused, now)
     fused = _filter_vintage(fused, vintage_filter, include_obsolete, now)
 
-    if fused:
+    if fused and not VALOR_KB_SKIP_RERANK:
         try:
             fused = _rerank(query, fused, top_k=top_k)
         except Exception as exc:
             import logging
             logging.getLogger(__name__).warning("rerank failed, using RRF order: %s", exc)
             fused = fused[:top_k]
+    elif fused:
+        fused = fused[:top_k]
     return _enrich(fused)
 
 
@@ -133,13 +148,15 @@ def _retrieve_multi_query(
     fused = _apply_time_decay(fused, now)
     fused = _filter_vintage(fused, vintage_filter, include_obsolete, now)
 
-    if fused:
+    if fused and not VALOR_KB_SKIP_RERANK:
         try:
             fused = _rerank(query, fused, top_k=top_k)
         except Exception as exc:
             import logging
             logging.getLogger(__name__).warning("rerank failed, using RRF order: %s", exc)
             fused = fused[:top_k]
+    elif fused:
+        fused = fused[:top_k]
     return _enrich(fused)
 
 
@@ -165,22 +182,26 @@ def _rrf_multi(per_query_hits: list[list[ChunkResult]], k: int, c: int = 60) -> 
 
 
 def _bm25_search(query: str, k: int) -> list[ChunkResult]:
-    tokens = " ".join(jieba.cut(query))
-    # Sanitize: keep only CJK chars, alphanumeric, and whitespace.
-    # FTS5 reserves many punctuation chars (, ? " * : etc.) and throws
-    # "syntax error near ..." when user queries contain them.
-    tokens = "".join(
-        c if (c.isalnum() or c.isspace() or "一" <= c <= "鿿") else " "
-        for c in tokens
-    )
-    tokens = " ".join(tokens.split())
-    if not tokens.strip():
+    # Filter stopwords first - FTS5 default AND means a single missing
+    # stopword ("的/是/什么") zeroes out the whole match.
+    tokens = [t for t in jieba.cut(query) if t.strip() and t not in _BM25_STOPWORDS]
+    # Sanitize each token: keep only CJK chars, alphanumeric
+    cleaned = []
+    for t in tokens:
+        s = "".join(c if (c.isalnum() or "一" <= c <= "鿿") else " " for c in t)
+        s = s.strip()
+        if s:
+            cleaned.append(s)
+    if not cleaned:
         return []
+    # OR query: any token matches, bm25() ranking favors chunks hitting more
+    # query tokens. AND was too strict (q30 missed because "因素" absent from GT).
+    query_str = " OR ".join(cleaned)
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT chunk_id, bm25(kb_chunks_fts) AS score "
             "FROM kb_chunks_fts WHERE kb_chunks_fts MATCH ? ORDER BY score LIMIT ?",
-            (tokens, k),
+            (query_str, k),
         ).fetchall()
     return [ChunkResult(chunk_id=r["chunk_id"], doc_id="", text="", score=-r["score"]) for r in rows]
 
