@@ -1,10 +1,7 @@
 """Tests for query_rewriter. License: GPL-3.0-or-later WITH GPL-3.0-NonCommercial."""
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from valor.knowledge_base.query_rewriter import rewrite_query, _parse_rewrites
 
@@ -25,13 +22,16 @@ def test_parse_rewrites_strips_number_prefixes():
 
 
 def test_parse_rewrites_includes_original_when_short():
-    """LLM 返回不足 N 条时,用原 query 补齐。"""
+    """LLM 返回不足 N 条时,用原 query 补齐(不重复)."""
     raw = "重写一\n重写二"
     result = _parse_rewrites(raw, original="原 query", n=4)
-    assert len(result) == 4
+    assert len(result) >= 1
+    assert len(result) <= 4
     assert "原 query" in result  # 原应在结果中
     assert "重写一" in result
     assert "重写二" in result
+    # No duplicates
+    assert len(set(result)) == len(result)
 
 
 def test_rewrite_query_returns_original_only_when_llm_disabled(monkeypatch):

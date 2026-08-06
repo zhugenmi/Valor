@@ -57,9 +57,13 @@ def _parse_rewrites(raw: str, original: str, n: int) -> list[str]:
         if q and q not in seen:
             seen.add(q)
             unique.append(q)
-    # Pad with original if short
+    # Pad with original if short, but don't duplicate if original already present
     while len(unique) < n:
-        unique.append(original)
+        if original not in seen:
+            unique.append(original)
+            seen.add(original)
+        else:
+            break  # original already in list, can't pad without duplicating
     return unique[:n]
 
 
@@ -129,15 +133,16 @@ def rewrite_query(query: str, n: int = 3) -> list[str]:
         # Ensure original is included
         if query not in rewrites:
             rewrites = [query] + rewrites[: n - 1]
+        # Only cache on success - don't persist error fallbacks
+        with _CACHE_LOCK:
+            if len(_CACHE) >= _CACHE_MAX:
+                # Evict ~10% arbitrarily (not true LRU, but bounds memory)
+                keys = list(_CACHE.keys())
+                for k in keys[: max(1, _CACHE_MAX // 10)]:
+                    _CACHE.pop(k, None)
+            _CACHE[cache_key] = rewrites
     except Exception:
-        # LLM failure: degrade gracefully
+        # LLM failure: degrade gracefully, skip cache
         rewrites = [query]
 
-    with _CACHE_LOCK:
-        if len(_CACHE) >= _CACHE_MAX:
-            # Evict ~10% arbitrarily (not true LRU, but bounds memory)
-            keys = list(_CACHE.keys())
-            for k in keys[: max(1, _CACHE_MAX // 10)]:
-                _CACHE.pop(k, None)
-        _CACHE[cache_key] = rewrites
     return rewrites
