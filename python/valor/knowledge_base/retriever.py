@@ -18,6 +18,8 @@ VALOR_KB_VEC_K = int(os.getenv("VALOR_KB_VEC_K", "30"))
 VALOR_KB_RRF_K = int(os.getenv("VALOR_KB_RRF_K", "10"))
 VALOR_KB_RRF_W_BM25 = float(os.getenv("VALOR_KB_RRF_W_BM25", "0.3"))
 VALOR_KB_RRF_W_VEC = float(os.getenv("VALOR_KB_RRF_W_VEC", "0.7"))
+VALOR_KB_MULTI_QUERY = os.getenv("VALOR_KB_MULTI_QUERY", "1") == "1"
+VALOR_KB_MULTI_QUERY_N = int(os.getenv("VALOR_KB_MULTI_QUERY_N", "3"))
 
 # FTS5 query syntax reserves these chars; strip them to avoid "syntax error"
 # when user queries contain punctuation like ?, comma, *, etc.
@@ -61,26 +63,34 @@ def retrieve(
     vintage_filter: list[str] | None = None,
     include_obsolete: bool = False,
 ) -> list[ChunkResult]:
-    """Main retrieval pipeline. Returns empty list if pre-filter rejects."""
+    """Main retrieval pipeline. Returns empty list if pre-filter rejects.
+
+    When VALOR_KB_MULTI_QUERY=1 (default), generates N query variants via LLM
+    rewriter, runs BM25+vec+RRF for each in parallel, then fuses results with
+    a second RRF pass (chunks appearing in multiple queries get higher score).
+    """
     if not db.KB_AVAILABLE:
         return []
 
-    # Stage 2: pre-filter (top-1 vector similarity)
+    # Pre-filter on original query (cheap reject for completely-unrelated queries)
     top1 = _vec_search(query, k=1)
     if not top1 or top1[0].similarity < VALOR_KB_SIMILARITY_THRESHOLD:
         return []
 
-    # Stage 3: full RAG
+    if VALOR_KB_MULTI_QUERY:
+        return _retrieve_multi_query(
+            query, top_k, vintage_filter, include_obsolete
+        )
+
+    # Single-query path (original behavior)
     bm25_hits = _bm25_search(query, k=VALOR_KB_BM25_K)
     vec_hits = _vec_search(query, k=VALOR_KB_VEC_K)
     fused = _rrf(bm25_hits, vec_hits, k=VALOR_KB_RRF_K)
 
-    # Time decay + vintage filter
     now = datetime.now(UTC).replace(tzinfo=None)
     fused = _apply_time_decay(fused, now)
     fused = _filter_vintage(fused, vintage_filter, include_obsolete, now)
 
-    # Rerank
     if fused:
         try:
             fused = _rerank(query, fused, top_k=top_k)
@@ -88,9 +98,70 @@ def retrieve(
             import logging
             logging.getLogger(__name__).warning("rerank failed, using RRF order: %s", exc)
             fused = fused[:top_k]
-
-    # Enrich with doc metadata
     return _enrich(fused)
+
+
+def _retrieve_multi_query(
+    query: str,
+    top_k: int,
+    vintage_filter: list[str] | None,
+    include_obsolete: bool,
+) -> list[ChunkResult]:
+    """Agentic RAG: multi-query parallel retrieval + second-pass RRF fusion."""
+    from concurrent.futures import ThreadPoolExecutor
+    from valor.knowledge_base.query_rewriter import rewrite_query
+
+    queries = rewrite_query(query, n=VALOR_KB_MULTI_QUERY_N)
+    # Always include original (rewrite_query guarantees this, but defensive)
+    if query not in queries:
+        queries = [query] + queries
+
+    # Parallel: per-query BM25+vec+RRF
+    def _single_query_retrieve(q: str) -> list[ChunkResult]:
+        bm25 = _bm25_search(q, k=VALOR_KB_BM25_K)
+        vec = _vec_search(q, k=VALOR_KB_VEC_K)
+        return _rrf(bm25, vec, k=VALOR_KB_RRF_K)
+
+    with ThreadPoolExecutor(max_workers=min(len(queries), 4)) as ex:
+        per_query_hits = list(ex.map(_single_query_retrieve, queries))
+
+    # Second-pass RRF: fuse per-query ranked lists
+    # Each query contributes equally; chunk appearing in multiple queries wins.
+    fused = _rrf_multi(per_query_hits, k=VALOR_KB_RRF_K * 2)
+
+    now = datetime.now(UTC).replace(tzinfo=None)
+    fused = _apply_time_decay(fused, now)
+    fused = _filter_vintage(fused, vintage_filter, include_obsolete, now)
+
+    if fused:
+        try:
+            fused = _rerank(query, fused, top_k=top_k)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("rerank failed, using RRF order: %s", exc)
+            fused = fused[:top_k]
+    return _enrich(fused)
+
+
+def _rrf_multi(per_query_hits: list[list[ChunkResult]], k: int, c: int = 60) -> list[ChunkResult]:
+    """Second-pass RRF: fuse multiple ranked lists.
+
+    Each query's hits contribute 1/(c+rank) to the chunk's score. Chunks
+    appearing in multiple queries accumulate scores -> rank higher.
+    """
+    scores: dict[str, float] = {}
+    meta: dict[str, ChunkResult] = {}
+    for hits in per_query_hits:
+        for rank, hit in enumerate(hits):
+            scores[hit.chunk_id] = scores.get(hit.chunk_id, 0.0) + 1.0 / (c + rank)
+            meta.setdefault(hit.chunk_id, hit)
+    ranked = sorted(scores.items(), key=lambda x: -x[1])[:k]
+    out = []
+    for cid, score in ranked:
+        m = meta[cid]
+        m.score = score
+        out.append(m)
+    return out
 
 
 def _bm25_search(query: str, k: int) -> list[ChunkResult]:
