@@ -152,3 +152,65 @@ def test_chunk_filter_keeps_normal_short_chunk():
     # 表格 chunk 应保留
     has_table = any("营收" in c.text or "|" in c.text for c in chunks)
     assert has_table, "表格 chunk 被误杀"
+
+
+def test_chunk_filter_drops_repeated_report_title():
+    """重复出现的报告标题(如每页页眉)应被过滤。"""
+    title_line = "2026中国白酒市场中期研究报告"
+    # body must be long enough (> chunk_size=800) so title lines become separate chunks
+    body = "白酒行业核心观点:高端白酒市场增长强劲,消费升级趋势明显,价格带持续上移。" * 30
+    # 报告标题作为独立段落重复出现(模拟每页页眉)
+    text = title_line + "\n\n" + body + "\n\n" + title_line + "\n\n" + body + "\n\n" + title_line
+    doc = ParsedDocument(
+        file_path="x", mime_type="text/plain",
+        pages=[ParsedPage(page_no=1, text=text)],
+        full_text=text,
+    )
+    chunks = chunk_document(doc, CHUNK_STRATEGIES["research"])
+    # 报告标题不应作为独立 chunk
+    title_chunks = [c for c in chunks if c.text.strip() == title_line]
+    assert not title_chunks, f"重复报告标题未被过滤: {[c.text for c in title_chunks]!r}"
+
+
+def test_chunk_filter_drops_long_copyright_with_keywords():
+    """长版权声明(>80 字,但含多个噪声关键词)应被过滤。"""
+    # 模拟 q17 案例:毕马威版权声明,长度 > 80 字
+    copyright_long = (
+        "毕马威会计师事务所版权所有,未经许可不得转载。"
+        "本报告仅供参考,不构成投资建议。"
+        "2026中国白酒市场中期研究报告版权所有,不得转载。"
+        "免责声明:本报告所载信息仅供参考。"
+    )
+    # body must be long enough (> chunk_size=800) so copyright becomes a separate chunk
+    body = "白酒行业核心观点:高端白酒市场增长强劲,消费升级趋势明显。" * 30
+    text = body + "\n\n" + copyright_long
+    doc = ParsedDocument(
+        file_path="x", mime_type="text/plain",
+        pages=[ParsedPage(page_no=1, text=text)],
+        full_text=text,
+    )
+    chunks = chunk_document(doc, CHUNK_STRATEGIES["research"])
+    for c in chunks:
+        # 版权声明不应作为独立 chunk 出现
+        if "版权所有" in c.text and "不得转载" in c.text:
+            # 若出现,应只是 body 中正常提及,而非整段版权声明
+            assert len(c.text) > 200, f"长版权声明未被过滤: {c.text!r}"
+
+
+def test_chunk_filter_dedups_near_duplicates():
+    """高度相似的 chunk(余弦相似度 > 0.95)只保留一个。"""
+    # 模拟 q17:多个版权声明 chunk 文本高度相似
+    chunk1_text = "2026中国白酒市场中期研究报告版权所有,未经许可不得转载。"
+    chunk2_text = "2026中国白酒市场中期研究报告版权所有,未经许可不得转载。"  # 完全相同
+    # body must be long enough (> chunk_size=800) so chunks become separate chunks
+    body = "白酒行业核心观点:高端白酒市场增长强劲,消费升级趋势明显。" * 30
+    text = chunk1_text + "\n\n" + body + "\n\n" + chunk2_text
+    doc = ParsedDocument(
+        file_path="x", mime_type="text/plain",
+        pages=[ParsedPage(page_no=1, text=text)],
+        full_text=text,
+    )
+    chunks = chunk_document(doc, CHUNK_STRATEGIES["research"])
+    # 不应有两个完全相同的 chunk
+    texts = [c.text for c in chunks]
+    assert len(texts) == len(set(texts)), f"存在完全相同的重复 chunk: {texts!r}"

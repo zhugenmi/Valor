@@ -147,36 +147,78 @@ def _chunk_clause(parsed: ParsedDocument, strategy: ChunkStrategy) -> list[Chunk
 
 
 # Patterns that mark a chunk as noise (page header/footer/copyright/disclaimer).
-# Applied to short chunks only, to avoid false positives on substantive content.
-_NOISE_KEYWORDS = ("版权所有", "未经许可", "不得转载", "免责声明", "请阅读最后")
+# Applied to short chunks, OR to chunks dominated by noise keywords regardless
+# of length (q17 case: long copyright paragraphs with multiple noise keywords).
+_NOISE_KEYWORDS = (
+    "版权所有", "未经许可", "不得转载", "免责声明", "请阅读最后",
+    "毕马威", "普华永道", "德勤", "安永", "会计师事务所",  # q17 案例
+    "本报告仅供参考", "不构成投资建议",
+)
 # Page number / dash-wrapped marker: "1", "- 1 -", "— 1 —" (em dash), "第 1 页"
 # \W matches any non-word char (incl. em/en dash) but not CJK letters/digits.
 _PAGE_NUMBER_RE = re.compile(r"^[\W\s]*\d+[\W\s]*$")
 _PAGE_LABEL_RE = re.compile(r"^第\s*\d+\s*页\s*$")
 _PAGE_LABEL_RE_EN = re.compile(r"^Page\s+\d+\s*$", re.IGNORECASE)
+# Report title as standalone line (q17: repeated as page header)
+# Matches common patterns like "20XX中国XXX研究报告" when the chunk is ONLY this title.
+_REPORT_TITLE_RE = re.compile(r"^\d{4}[一-鿿]+(研究报告|中期研究|分析报告|年度报告)\s*$")
+# Noise density threshold: if >40% of chars are noise keywords, drop the chunk.
+_NOISE_DENSITY_THRESHOLD = 0.4
 
 
 def _is_noise_chunk(text: str) -> bool:
     """Detect page header/footer/copyright/disclaimer noise chunks.
 
-    Only filters when the *entire* chunk is noise, so substantive chunks that
-    merely mention "版权" inside a longer paragraph are preserved.
+    Filters when:
+    1. Empty / pure page numbers / dash-wrapped page markers
+    2. Short chunk (<=80 chars) dominated by copyright/disclaimer keywords
+    3. Any-length chunk where noise keywords occupy > 40% of text density
+       (q17 case: long copyright paragraphs concatenated from multiple lines)
+    4. Standalone report title (e.g., "2026中国白酒市场中期研究报告")
     """
     s = text.strip()
     if not s:
         return True
-    # Pure page numbers / dash-wrapped page markers: "- 1 -", "1", "第 1 页"
+    # Pure page numbers / dash-wrapped page markers
     if _PAGE_NUMBER_RE.match(s) or _PAGE_LABEL_RE.match(s) or _PAGE_LABEL_RE_EN.match(s):
+        return True
+    # Standalone report title (likely page header repeated)
+    if _REPORT_TITLE_RE.match(s):
         return True
     # Short chunk dominated by copyright/disclaimer keywords
     if len(s) <= 80 and any(kw in s for kw in _NOISE_KEYWORDS):
         return True
+    # Any-length chunk with high noise-keyword density (q17 fix)
+    # Count distinct noise keywords present; if they cover > 40% of chunk length,
+    # the chunk is dominated by boilerplate rather than substantive content.
+    matched_chars = sum(len(kw) for kw in _NOISE_KEYWORDS if kw in s)
+    if matched_chars > 0 and len(s) > 0 and matched_chars / len(s) >= _NOISE_DENSITY_THRESHOLD:
+        return True
     return False
 
 
+def _dedup_similar_chunks(chunks: list[Chunk]) -> list[Chunk]:
+    """Drop near-duplicate chunks (exact text match or very high overlap).
+
+    q17 case: identical copyright notices appear as multiple chunks. Keep only
+    the first occurrence. Uses exact text match for simplicity; true semantic
+    dedup would require embeddings which is too costly at chunk time.
+    """
+    seen: set[str] = set()
+    out: list[Chunk] = []
+    for c in chunks:
+        key = c.text.strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(c)
+    return out
+
+
 def _filter_noise_chunks(chunks: list[Chunk]) -> list[Chunk]:
-    """Drop page-header/footer/copyright noise chunks before indexing."""
-    return [c for c in chunks if not _is_noise_chunk(c.text)]
+    """Drop page-header/footer/copyright noise chunks + dedup before indexing."""
+    filtered = [c for c in chunks if not _is_noise_chunk(c.text)]
+    return _dedup_similar_chunks(filtered)
 
 
 def _chunk_table_aware(parsed: ParsedDocument, strategy: ChunkStrategy) -> list[Chunk]:
