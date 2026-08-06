@@ -73,13 +73,14 @@ def parse_pdf(file_path: Path) -> ParsedDocument:
             page_text = page.extract_text() or ""
             doc.pages.append(ParsedPage(page_no=idx, text=page_text))
             text_parts.append(page_text)
-            # Extract tables with caption inferred from nearest preceding heading
-            for tbl in page.extract_tables() or []:
-                doc.tables.append(ParsedTable(page_no=idx, rows=tbl, caption=last_heading))
             # Heading heuristic: chars with size >= 14 and line length <= 30
+            # Extract headings BEFORE tables so same-page headings propagate to table captions
             new_headings = _extract_headings_from_page_returned(page, idx, doc.heading_tree)
             if new_headings:
                 last_heading = new_headings[-1].text
+            # Extract tables with caption inferred from nearest preceding heading
+            for tbl in page.extract_tables() or []:
+                doc.tables.append(ParsedTable(page_no=idx, rows=tbl, caption=last_heading))
     doc.full_text = "\n\n".join(text_parts)
     return doc
 

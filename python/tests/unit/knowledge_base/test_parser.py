@@ -238,10 +238,10 @@ def test_parse_pdf_propagates_heading_to_table_caption(tmp_path):
         mock_open.return_value.__enter__.return_value = fake_pdf
         parsed = parse_pdf(pdf_path)
 
-    # Page 1 table: no preceding heading yet (tables extracted before headings on each page)
+    # Page 1 table: same-page heading "主要财务数据" is now extracted before the table
     assert len(parsed.tables) >= 1
-    assert parsed.tables[0].caption is None, \
-        f"Expected None (no preceding heading), got {parsed.tables[0].caption!r}"
+    assert parsed.tables[0].caption == "主要财务数据", \
+        f"Expected caption '主要财务数据', got {parsed.tables[0].caption!r}"
 
     # Page 2 table: should inherit the heading from page 1 (last_heading persists across pages)
     assert len(parsed.tables) >= 2
