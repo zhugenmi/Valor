@@ -5,7 +5,7 @@ import pytest
 
 from valor.knowledge_base.kb_store import insert_chunks, insert_document, insert_fts, insert_vectors
 from valor.knowledge_base.models import Chunk, KBDoc
-from valor.knowledge_base.retriever import retrieve
+from valor.knowledge_base.retriever import _rrf, ChunkResult, retrieve
 from valor.server.db import KB_AVAILABLE, init_db
 
 
@@ -67,3 +67,38 @@ def test_retrieve_skips_when_low_similarity(kb_with_docs, monkeypatch):
     monkeypatch.setattr(retriever, "VALOR_KB_SIMILARITY_THRESHOLD", 0.99)
     results = retrieve("anything", top_k=5)
     assert results == []
+
+
+def _make_hit(cid: str, score: float = 0.5, sim: float = 0.5) -> ChunkResult:
+    return ChunkResult(chunk_id=cid, doc_id="", text="", score=score, similarity=sim)
+
+
+def test_rrf_weighted_favors_vector_rank():
+    """加权 RRF(w_bm25=0.3, w_vec=0.7)应让向量 top-1 优先于 BM25 top-1。"""
+    bm25_hits = [_make_hit("A"), _make_hit("B")]
+    vec_hits = [_make_hit("B"), _make_hit("A")]
+
+    fused_equal = _rrf(bm25_hits, vec_hits, k=2, c=60, w_bm25=0.5, w_vec=0.5)
+    fused_weighted = _rrf(bm25_hits, vec_hits, k=2, c=60, w_bm25=0.3, w_vec=0.7)
+
+    assert fused_equal[0].chunk_id in ("A", "B")
+    assert fused_weighted[0].chunk_id == "B", \
+        f"加权后向量 top-1 (B) 应排第一,实际: {fused_weighted[0].chunk_id}"
+
+
+def test_rrf_default_weights_are_weighted():
+    """默认调用 _rrf 应使用加权模式(0.3/0.7),可通过 env 配置。"""
+    bm25_hits = [_make_hit("A"), _make_hit("B")]
+    vec_hits = [_make_hit("B"), _make_hit("A")]
+    fused = _rrf(bm25_hits, vec_hits, k=2)
+    assert fused[0].chunk_id == "B", \
+        f"默认加权 RRF 应让 B 排第一,实际: {fused[0].chunk_id}"
+
+
+def test_rrf_zero_bm25_weight_pure_vector():
+    """w_bm25=0, w_vec=1.0 时,完全跟随向量排序。"""
+    bm25_hits = [_make_hit("A"), _make_hit("B"), _make_hit("C")]
+    vec_hits = [_make_hit("C"), _make_hit("B"), _make_hit("A")]
+    fused = _rrf(bm25_hits, vec_hits, k=3, c=60, w_bm25=0.0, w_vec=1.0)
+    assert [c.chunk_id for c in fused] == ["C", "B", "A"], \
+        f"w_bm25=0 应纯向量排序,实际: {[c.chunk_id for c in fused]}"

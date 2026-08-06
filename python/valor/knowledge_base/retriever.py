@@ -16,6 +16,8 @@ VALOR_KB_SIMILARITY_THRESHOLD = float(os.getenv("VALOR_KB_SIMILARITY_THRESHOLD",
 VALOR_KB_BM25_K = int(os.getenv("VALOR_KB_BM25_K", "30"))
 VALOR_KB_VEC_K = int(os.getenv("VALOR_KB_VEC_K", "30"))
 VALOR_KB_RRF_K = int(os.getenv("VALOR_KB_RRF_K", "10"))
+VALOR_KB_RRF_W_BM25 = float(os.getenv("VALOR_KB_RRF_W_BM25", "0.3"))
+VALOR_KB_RRF_W_VEC = float(os.getenv("VALOR_KB_RRF_W_VEC", "0.7"))
 
 # FTS5 query syntax reserves these chars; strip them to avoid "syntax error"
 # when user queries contain punctuation like ?, comma, *, etc.
@@ -131,14 +133,33 @@ def _vec_search(query: str, k: int) -> list[ChunkResult]:
     return results
 
 
-def _rrf(bm25_hits: list[ChunkResult], vec_hits: list[ChunkResult], k: int, c: int = 60) -> list[ChunkResult]:
+def _rrf(
+    bm25_hits: list[ChunkResult],
+    vec_hits: list[ChunkResult],
+    k: int,
+    c: int = 60,
+    w_bm25: float | None = None,
+    w_vec: float | None = None,
+) -> list[ChunkResult]:
+    """Reciprocal Rank Fusion with optional weighted BM25/vector scores.
+
+    Weighted RRF: score(d) = w_bm25 / (c + rank_bm25) + w_vec / (c + rank_vec)
+
+    Weights default to VALOR_KB_RRF_W_BM25 (0.3) and VALOR_KB_RRF_W_VEC (0.7),
+    favoring vector retrieval (better semantic recall for Chinese finance docs).
+    Set both to 0.5 for classic equal-weight RRF.
+    """
+    if w_bm25 is None:
+        w_bm25 = VALOR_KB_RRF_W_BM25
+    if w_vec is None:
+        w_vec = VALOR_KB_RRF_W_VEC
     scores: dict[str, float] = {}
     meta: dict[str, ChunkResult] = {}
     for rank, hit in enumerate(bm25_hits):
-        scores[hit.chunk_id] = scores.get(hit.chunk_id, 0) + 1.0 / (c + rank)
+        scores[hit.chunk_id] = scores.get(hit.chunk_id, 0.0) + w_bm25 / (c + rank)
         meta.setdefault(hit.chunk_id, hit)
     for rank, hit in enumerate(vec_hits):
-        scores[hit.chunk_id] = scores.get(hit.chunk_id, 0) + 1.0 / (c + rank)
+        scores[hit.chunk_id] = scores.get(hit.chunk_id, 0.0) + w_vec / (c + rank)
         meta.setdefault(hit.chunk_id, hit)
     ranked = sorted(scores.items(), key=lambda x: -x[1])[:k]
     out = []
