@@ -12,6 +12,7 @@ import pytest
 from valor.knowledge_base.parser import (
     ParsedDocument,
     ParsedPage,
+    ParsedTable,
     extract_publish_date,
     extract_report_period,
     extract_ticker,
@@ -198,3 +199,51 @@ def test_parse_unsupported_mime_raises(tmp_path):
     f.write_bytes(b"\x00")
     with pytest.raises(ValueError, match="unsupported"):
         parse(f, "application/octet-stream")
+
+
+# ---------------------------------------------------------------------------
+# Integration test: parse_pdf caption propagation (Task 3 fix round 1)
+# ---------------------------------------------------------------------------
+
+def test_parse_pdf_propagates_heading_to_table_caption(tmp_path):
+    """parse_pdf should set ParsedTable.caption from the nearest preceding heading."""
+    from unittest.mock import MagicMock, patch
+
+    # Page 1: has a heading "主要财务数据" then a table
+    fake_page1 = MagicMock()
+    fake_page1.extract_text.return_value = "主要财务数据\n营业收入 100亿"
+    fake_page1.extract_tables.return_value = [[["项目", "金额"], ["营收", "100"]]]
+    fake_page1.extract_words.return_value = [
+        {"text": "主", "top": 50, "x0": 50, "size": 16},
+        {"text": "要", "top": 50, "x0": 60, "size": 16},
+        {"text": "财", "top": 50, "x0": 70, "size": 16},
+        {"text": "务", "top": 50, "x0": 80, "size": 16},
+        {"text": "数", "top": 50, "x0": 90, "size": 16},
+        {"text": "据", "top": 50, "x0": 100, "size": 16},
+    ]
+
+    # Page 2: has a table but no heading (should inherit from page 1)
+    fake_page2 = MagicMock()
+    fake_page2.extract_text.return_value = "其他内容"
+    fake_page2.extract_tables.return_value = [[["指标", "数值"], ["利润", "20"]]]
+    fake_page2.extract_words.return_value = []
+
+    fake_pdf = MagicMock()
+    fake_pdf.pages = [fake_page1, fake_page2]
+
+    pdf_path = tmp_path / "fake.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 fake")
+
+    with patch("valor.knowledge_base.parser.pdfplumber.open") as mock_open:
+        mock_open.return_value.__enter__.return_value = fake_pdf
+        parsed = parse_pdf(pdf_path)
+
+    # Page 1 table: no preceding heading yet (tables extracted before headings on each page)
+    assert len(parsed.tables) >= 1
+    assert parsed.tables[0].caption is None, \
+        f"Expected None (no preceding heading), got {parsed.tables[0].caption!r}"
+
+    # Page 2 table: should inherit the heading from page 1 (last_heading persists across pages)
+    assert len(parsed.tables) >= 2
+    assert parsed.tables[1].caption == "主要财务数据", \
+        f"Page 2 table should inherit caption from page 1, got {parsed.tables[1].caption!r}"

@@ -327,7 +327,7 @@ def _table_to_markdown(tbl: ParsedTable) -> str:
     if not tbl.rows:
         return ""
     lines = []
-    caption = _table_caption(tbl)
+    caption = _table_caption(tbl).replace("|", "\\|").replace("\n", " ")
     lines.append(f"【表格: {caption}】")
     for i, row in enumerate(tbl.rows):
         cells = [str(c).replace("|", "\\|").replace("\n", " ") for c in row]

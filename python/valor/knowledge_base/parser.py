@@ -66,8 +66,8 @@ def parse_pdf(file_path: Path) -> ParsedDocument:
     """Parse PDF with pdfplumber: extract text + tables per page."""
     doc = ParsedDocument(file_path=str(file_path), mime_type="application/pdf")
     text_parts: list[str] = []
-    # Track last heading text per page for table caption inference
-    last_heading_per_page: dict[int, str] = {}
+    # Track last heading text across pages for table caption inference
+    last_heading: str | None = None
     with pdfplumber.open(file_path) as pdf:
         for idx, page in enumerate(pdf.pages, start=1):
             page_text = page.extract_text() or ""
@@ -75,12 +75,11 @@ def parse_pdf(file_path: Path) -> ParsedDocument:
             text_parts.append(page_text)
             # Extract tables with caption inferred from nearest preceding heading
             for tbl in page.extract_tables() or []:
-                caption = last_heading_per_page.get(idx)
-                doc.tables.append(ParsedTable(page_no=idx, rows=tbl, caption=caption))
+                doc.tables.append(ParsedTable(page_no=idx, rows=tbl, caption=last_heading))
             # Heading heuristic: chars with size >= 14 and line length <= 30
             new_headings = _extract_headings_from_page_returned(page, idx, doc.heading_tree)
             if new_headings:
-                last_heading_per_page[idx] = new_headings[-1].text
+                last_heading = new_headings[-1].text
     doc.full_text = "\n\n".join(text_parts)
     return doc
 
