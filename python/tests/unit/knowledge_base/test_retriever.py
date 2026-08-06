@@ -16,7 +16,8 @@ def kb_with_docs(tmp_path, monkeypatch):
     dbmod.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     init_db()
     # Disable multi-query to avoid slow LLM call attempts in existing tests
-    monkeypatch.setenv("VALOR_KB_MULTI_QUERY", "0")
+    from valor.knowledge_base import retriever as kb_retriever
+    monkeypatch.setattr(kb_retriever, "VALOR_KB_MULTI_QUERY", False)
     # Insert two docs
     now = datetime.now(UTC).replace(tzinfo=None)
     for i, (title, text) in enumerate([
