@@ -197,9 +197,9 @@ def test_chunk_filter_drops_long_copyright_with_keywords():
             assert len(c.text) > 200, f"长版权声明未被过滤: {c.text!r}"
 
 
-def test_chunk_filter_dedups_near_duplicates():
-    """高度相似的 chunk(余弦相似度 > 0.95)只保留一个。"""
-    # 模拟 q17:多个版权声明 chunk 文本高度相似
+def test_chunk_filter_dedups_exact_duplicates():
+    """完全相同的 chunk(精确文本匹配)只保留一个。"""
+    # 模拟 q17:多个版权声明 chunk 文本完全相同
     chunk1_text = "2026中国白酒市场中期研究报告版权所有,未经许可不得转载。"
     chunk2_text = "2026中国白酒市场中期研究报告版权所有,未经许可不得转载。"  # 完全相同
     # body must be long enough (> chunk_size=800) so chunks become separate chunks

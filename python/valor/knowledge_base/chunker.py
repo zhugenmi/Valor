@@ -162,7 +162,7 @@ _PAGE_LABEL_RE_EN = re.compile(r"^Page\s+\d+\s*$", re.IGNORECASE)
 # Report title as standalone line (q17: repeated as page header)
 # Matches common patterns like "20XX中国XXX研究报告" when the chunk is ONLY this title.
 _REPORT_TITLE_RE = re.compile(r"^\d{4}[一-鿿]+(研究报告|中期研究|分析报告|年度报告)\s*$")
-# Noise density threshold: if >40% of chars are noise keywords, drop the chunk.
+# Noise density threshold: if >= 40% of chars are noise keywords, drop the chunk.
 _NOISE_DENSITY_THRESHOLD = 0.4
 
 
@@ -192,17 +192,17 @@ def _is_noise_chunk(text: str) -> bool:
     # Count distinct noise keywords present; if they cover > 40% of chunk length,
     # the chunk is dominated by boilerplate rather than substantive content.
     matched_chars = sum(len(kw) for kw in _NOISE_KEYWORDS if kw in s)
-    if matched_chars > 0 and len(s) > 0 and matched_chars / len(s) >= _NOISE_DENSITY_THRESHOLD:
+    if matched_chars > 0 and matched_chars / len(s) >= _NOISE_DENSITY_THRESHOLD:
         return True
     return False
 
 
-def _dedup_similar_chunks(chunks: list[Chunk]) -> list[Chunk]:
-    """Drop near-duplicate chunks (exact text match or very high overlap).
+def _dedup_exact_duplicates(chunks: list[Chunk]) -> list[Chunk]:
+    """Drop chunks with identical text (exact match only).
 
     q17 case: identical copyright notices appear as multiple chunks. Keep only
-    the first occurrence. Uses exact text match for simplicity; true semantic
-    dedup would require embeddings which is too costly at chunk time.
+    the first occurrence. Uses exact text match for simplicity; embedding-based
+    semantic dedup would be too costly at chunk time.
     """
     seen: set[str] = set()
     out: list[Chunk] = []
@@ -218,7 +218,7 @@ def _dedup_similar_chunks(chunks: list[Chunk]) -> list[Chunk]:
 def _filter_noise_chunks(chunks: list[Chunk]) -> list[Chunk]:
     """Drop page-header/footer/copyright noise chunks + dedup before indexing."""
     filtered = [c for c in chunks if not _is_noise_chunk(c.text)]
-    return _dedup_similar_chunks(filtered)
+    return _dedup_exact_duplicates(filtered)
 
 
 def _chunk_table_aware(parsed: ParsedDocument, strategy: ChunkStrategy) -> list[Chunk]:
