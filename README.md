@@ -2,14 +2,14 @@
 
 > **Va**lue **l**ong-term **or**ientation — 个人专业理财助理，专注 A 股投资分析与决策。
 
-Valor 是一个**本地可自托管**的个人专业理财助理，以 Web 应用形式运行（浏览器访问），核心能力：
+Valor 是一个**本地可自托管**的个人专业理财助理，核心能力：
 
-- **个股诊断**：12 个 AI Agent 协同分析（技术 / 基本面 / 估值 / 情绪 / 宏观 / 多空辩论 / 风险），输出 buy/sell/hold 决策
+- **个股诊断**：10 节点 AI Agent 工作流协同分析（技术 / 基本面 / 估值 / 情绪 / 宏观 / 多空辩论 / 风险），输出 buy/sell/hold 决策
 - **SSE 流式分析**：前端实时推送每个 Agent 的分析信号与决策进展
 - **Agent 工作流**：基于 LangGraph 编排，流程可视化可追溯
+- **知识增强（RAG）**：研报/财报/监管文档入库，BM25+向量+重排混合检索，注入 Agent 上下文并支持财务纠错
 - **数据层**：AkShare 主 + Tushare / Baostock 字段级 fallback，SQLite TTL 缓存
-- **LLM 适配**：多 Provider 支持（OpenAI 兼容 / Gemini / Ollama / 智能路由），可切换
-- **38 个 API 路由**：涵盖分析、流式推送、行情、系统管理、用户配置等
+- **LLM 适配**：多 Provider 支持（OpenAI 兼容 / Gemini / Ollama / 智能路由），可切换，支持 tool-calling
 - **持仓管理 / 资产配置 / 回测**（Phase 2+）
 
 ## 项目结构
@@ -36,7 +36,7 @@ valor/
 │   │   ├── adapters/
 │   │   │   ├── llm/       # LLM Provider（OpenAI-compat / Gemini / Ollama / Router）
 │   │   │   └── data/      # 数据适配器（AkShare / Tushare / Baostock + Router）
-│   │   ├── agents/        # 12 个 Agent + LangGraph 工作流
+│   │   ├── agents/        # 10 节点 Agent + LangGraph 工作流
 │   │   ├── server/        # FastAPI 服务（11 routers, 38 routes）
 │   │   │   └── routes/    # health, auth, stream, analysis, stock, models, system, ...
 │   │   ├── network/       # 代理轮询
@@ -108,10 +108,13 @@ cd frontend && bun dev
 
 ## Agent 工作流
 
-12 个 Agent 按 LangGraph 工作流编排：
+10 节点按 LangGraph 工作流编排：
 
 ```
 市场数据（market_data）
+    │
+    ▼
+知识库检索（kb_retrieval，RAG）
     │
     ▼（并行扇出）
 技术分析 → 基本面 → 估值 → 情绪 → 宏观
@@ -137,9 +140,8 @@ cd frontend && bun dev
 
 | 事件 | 说明 |
 |---|---|
-| `token` | LLM 推理 token 流 |
 | `agent_completed` | 单个 Agent 分析完成，携带信号和推理 |
-| `workflow_started` | 12 Agent 工作流启动 |
+| `workflow_started` | 10 节点工作流启动 |
 | `workflow_completed` | 工作流结束，携带最终决策 |
 | `error` | 异常信息 |
 
@@ -211,7 +213,7 @@ uv run ruff check valor/ tests/
 | Phase | 内容 | 状态 |
 |---|---|---|
 | 1A | Python 后端基础（数据层 + LLM 适配 + CLI） | ✅ 完成 |
-| 1B | 12 Agent + LangGraph 工作流 | ✅ 完成 |
+| 1B | 10 节点 Agent + LangGraph 工作流 | ✅ 完成 |
 | 1C | FastAPI 服务 + 11 路由（38 端点） | ✅ 完成 |
 | 1D | 前端分析页 + SSE 流式 Agent 事件 | ✅ 完成 |
 | 2 | 持仓管理与资产配置 | ✅ 完成 |
